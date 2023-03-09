@@ -1,8 +1,25 @@
 # UV-AT
 
+## Building
+
+Once cloned, fetch the dependencies (geometry-central, libigl, polyscope and DGtal) using git submodules:
+
+```
+git submodule update --init --recursive
+```
+
+Then on  unbutu/macos=
+
+```
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j 8
+```
+
+
 ## Usage
 
-To build : `mkdir build; cd build; cmake ..; make`
 To run : `./build/bin/at-uv -i bunnyhead.obj`
 
 You can use the button `Compute initial AT-UV` to compute the initial parameterization and cut and then run the method once. It results with a uv mapping and its corresponding v. It then enables cutting buttons.
