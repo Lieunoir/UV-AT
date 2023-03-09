@@ -8,7 +8,7 @@ Once cloned, fetch the dependencies (geometry-central, libigl, polyscope and DGt
 git submodule update --init --recursive
 ```
 
-Then on  unbutu/macos=
+Then, on  unbutu/macos:
 
 ```
 mkdir build
