@@ -1,0 +1,1860 @@
+/**
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as
+ *  published by the Free Software Foundation, either version 3 of the
+ *  License, or  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **/
+
+/**
+ * @file SurfaceMesh.ih
+ * @author Jacques-Olivier Lachaud (\c jacques-olivier.lachaud@univ-savoie.fr )
+ * Laboratory of Mathematics (CNRS, UMR 5127), University of Savoie, France
+ *
+ * @date 2020/02/18
+ *
+ * Implementation of inline methods defined in SurfaceMesh.h
+ *
+ * This file is part of the DGtal library.
+ */
+
+
+//////////////////////////////////////////////////////////////////////////////
+#include <cstdlib>
+#include <limits>
+//////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// IMPLEMENTATION of inline methods.
+///////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// ----------------------- Standard services ------------------------------
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>
+::LinearOperator
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+dirichletOperator( const LinearOperator& A,
+                   const Form& p ) const
+{
+  ASSERT( A.cols() == A.rows() );
+  ASSERT( p.rows() == A.rows() );
+  const auto n = p.rows();
+  std::vector< Index > relabeling( n );
+  Index j = 0;
+  for ( Index i = 0; i < p.rows(); i++ )
+    relabeling[ i ] = ( p[ i ] == 0.0 ) ? j++ : n;
+  // Building matrix
+  LinearOperator Ap( j, j );
+  Triplets triplets;
+  for ( int k = 0; k < A.outerSize(); ++k )
+    for ( typename LinearOperator::InnerIterator it( A, k ); it; ++it )
+      {
+        if ( ( relabeling[ it.row() ] != n ) && ( relabeling[ it.col() ] != n ) )
+          triplets.push_back( { relabeling[ it.row() ], relabeling[ it.col() ],
+                it.value() } );
+      }
+  Ap.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  return Ap;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>
+::Form
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+dirichletVector( const LinearOperator& A,
+                 const Form& b,
+                 const Form& p,
+                 const Form& u ) const
+{
+  ASSERT( A.cols() == A.rows() );
+  ASSERT( p.rows() == A.rows() );
+  const auto n = p.rows();
+  Form  up = p.array() * u.array();
+  Form tmp = b.array() - (A * up).array();
+  std::vector< Index > relabeling( n );
+  Index j = 0;
+  for ( Index i = 0; i < p.rows(); i++ )
+    relabeling[ i ] = ( p[ i ] == 0.0 ) ? j++ : n;
+  Form  bp = DenseVector( j );
+  for ( Index i = 0; i < p.rows(); i++ )
+    if ( p[ i ] == 0 ) bp[ relabeling[ i ] ] = tmp[ i ];
+  return bp;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>
+::Form
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+dirichletSolution( const Form& xp,
+                   const Form& p,
+                   const Form& u ) const
+{
+  Form  x = DenseVector( p.rows() );
+  Index j = 0;
+  for ( Index i = 0; i < p.rows(); i++ )
+    x[ i ] = ( p[ i ] == 0.0 ) ? xp[ j++ ] : u[ i ];
+  return x;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+initDerivativeOperators()
+{
+  Triplets triplets;
+  trace.beginBlock( "Init derivative operator D0" );
+  Edge e = 0;
+  for ( auto && vtcs : myMesh->allEdgeVertices() )
+    {
+      triplets.push_back( { e, vtcs.first,  -1 } );
+      triplets.push_back( { e, vtcs.second,  1 } );
+      e++;
+    }
+  myD0 = LinearOperator( nbCells( 1 ), nbCells( 0 ) );
+  myD0.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  trace.info() << "D0=" << myD0.rows() << "x" << myD0.cols()
+               << " nnz=" << myD0.nonZeros()
+               << " nnz/row=" << nnzPerRow( myD0 ) << std::endl;
+  trace.endBlock();
+  
+  trace.beginBlock( "Init derivative operator D1" );
+  triplets.clear();
+  for ( e = 0; e < myMesh->nbEdges(); ++e )
+    {
+      auto left_faces  = myMesh->edgeLeftFaces( e );
+      for ( auto&& f : left_faces )
+        triplets.push_back( { f, e,  1 } );
+      auto right_faces = myMesh->edgeRightFaces( e );
+      for ( auto&& f : right_faces )
+        triplets.push_back( { f, e, -1 } );
+    }
+  myD1 = LinearOperator( nbCells( 2 ), nbCells( 1 ) );
+  myD1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  trace.info() << "D1=" << myD1.rows() << "x" << myD1.cols()
+               << " nnz=" << myD1.nonZeros()
+               << " nnz/row=" << nnzPerRow( myD1 ) << std::endl;
+  trace.endBlock();
+
+  // TODO
+  // LinearOperator T = sharp().transpose() * C1IP() * sharp();
+  // trace.beginBlock( "Init left Laplacian operator LL0" );
+  // myLL0 = -1.0 * myD0.transpose() * T * myD0;
+  // trace.info() << "LL0=" << myLL0.rows() << "x" << myLL0.cols()
+  //              << " nnz=" << myLL0.nonZeros()
+  //              << " nnz/row=" << nnzPerRow( myLL0 ) << std::endl;
+  // trace.endBlock();
+
+  // Too slow, not sparse at all.
+  // trace.beginBlock( "Init Laplacian operator L0" );
+  // EigenLinearAlgebraBackend::SolverSimplicialLDLT solver;
+  // solver.compute( myM0 );
+  // LinearOperator I( nbCells( 0 ), nbCells( 0 ) );
+  // I.setIdentity();
+  // myL0 = solver.solve(I) * myLL0;
+  // trace.info() << "L0=" << myL0.rows() << "x" << myL0.cols()
+  //              << " nnz=" << myL0.nonZeros()
+  //              << " nnz/row=" << nnzPerRow( myL0 ) << std::endl;
+  // trace.endBlock();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+initCorrectedCalculusOperators()
+{
+  if ( myMesh->vertexNormals().empty() )
+    {
+      trace.error() << "[SurfaceMeshDEC::initCorrectedCalculusOperators]"
+                    << " vertex normals should be provided." << std::endl;
+      return;
+    }
+  trace.beginBlock( "Init mass matrix M0 for 0-forms" );
+  computeCorrectedInnerProduct0();
+  trace.info() << "M0=" << myCCM0.rows() << "x" << myCCM0.cols()
+               << " nnz=" << myCCM0.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCM0 ) << std::endl;
+  checkNaNInSparseMatrix( myCCM0, "M0" );
+  checkSymmetryInSparseMatrix( myCCM0, "M0" );
+  trace.endBlock();
+  trace.beginBlock( "Init mass matrix M1 for 1-forms" );
+  computeCorrectedInnerProduct1();
+  trace.info() << "M1=" << myCCM1.rows() << "x" << myCCM1.cols()
+               << " nnz=" << myCCM1.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCM1 ) << std::endl;
+  checkNaNInSparseMatrix( myCCM1, "M1" );
+  checkSymmetryInSparseMatrix( myCCM1, "M1" );
+  trace.endBlock();
+  trace.beginBlock( "Init mass matrix M2 for 2-forms" );
+  computeCorrectedInnerProduct2();
+  trace.info() << "M2=" << myCCM2.rows() << "x" << myCCM2.cols()
+               << " nnz=" << myCCM2.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCM2 ) << std::endl;
+  checkNaNInSparseMatrix( myCCM2, "M2" );
+  checkSymmetryInSparseMatrix( myCCM2, "M2" );
+  trace.endBlock();
+  trace.beginBlock( "Init sharp operator # for 1-forms" );
+  computeCorrectedSharp();
+  trace.info() << "#x=" << myCCSharp.rows() << "x" << myCCSharp.cols()
+               << " nnz=" << myCCSharp.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCSharp ) << std::endl;
+  checkNaNInSparseMatrix( myCCSharp, "Sharp" );
+  trace.endBlock();
+  trace.beginBlock( "Init flat operator b for vector fields" );
+  computeCorrectedFlat();
+  trace.info() << "#x=" << myCCFlat.rows() << "x" << myCCFlat.cols()
+               << " nnz=" << myCCFlat.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCFlat ) << std::endl;
+  trace.endBlock();
+  checkNaNInSparseMatrix( myCCFlat, "Flat" );
+  trace.beginBlock( "Init Corner vectors inner product" );
+  computeCornerVectorInnerProduct();
+  trace.info() << "#x=" << myCCC1IP.rows() << "x" << myCCC1IP.cols()
+               << " nnz=" << myCCC1IP.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCC1IP ) << std::endl;
+  checkNaNInSparseMatrix( myCCC1IP, "C1IP" );
+  checkSymmetryInSparseMatrix( myCCC1IP, "C1IP" );
+  trace.endBlock();
+  trace.beginBlock( "Check mass matrix for 1-forms" );
+  LinearOperator T = ccSharp().transpose() * ccC1IP() * ccSharp() - ccM1();
+  double minc = 0.0;
+  double maxc = 0.0;
+  for ( int k = 0; k < T.outerSize(); ++k )
+    for ( typename LinearOperator::InnerIterator it( T,k ); it; ++it)
+      {
+        minc = std::min( it.value(), minc );
+        maxc = std::max( it.value(), maxc );
+        // it.row(), it.col(), it.index(); // inner index
+      }
+  trace.info() << "norm(T)=" << T.norm()
+               << " mincoeff(T)=" << minc
+               << " maxcoeff(T)=" << maxc
+               << std::endl;
+  trace.endBlock();
+  
+  trace.beginBlock( "Init left Laplacian operator ccLL0" );
+  myCCLL0 = -1.0 * myD0.transpose() * myCCM1 * myD0;
+  trace.info() << "LL0=" << myCCLL0.rows() << "x" << myCCLL0.cols()
+               << " nnz=" << myCCLL0.nonZeros()
+               << " nnz/row=" << nnzPerRow( myCCLL0 ) << std::endl;
+  checkSymmetryInSparseMatrix( myCCLL0, "LL0" );
+  trace.endBlock();
+}
+
+// //-----------------------------------------------------------------------------
+// template < typename TLinearAlgebraBackend,
+//            typename TRealPoint, typename TRealVector >
+// void
+// DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+// initAntiderivativeOperators()
+// {
+//   // Anti-derivative or codifferential operator A1 is defined by duality.
+//   // If f is a 0-form and b a 1-form, we may write
+//   // `< D0 f, b >_1 = < f, A1 b >_0`
+//   // It follows that `A1 := M0^-1 * D0^t * M1`
+//   //myA1 = M0.inverse() * 
+// }
+  
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeCorrectedInnerProduct0()
+{
+  Triplets triplets;
+  myCCM0 = LinearOperator( nbCells( 0 ), nbCells( 0 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto nv = nbCorners( f );
+      if ( nv == 3 ) triangleCorrectedInnerProduct0( triplets, f );
+      else if ( nv == 4 ) quadrangleCorrectedInnerProduct0( triplets, f );
+    }
+  myCCM0.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  myCCDiagH0     = myCCM0 * Form::Ones( nbCells( 0 ) );
+  myCCDiagDualH2 = Form::Ones( nbCells( 0 ) ).array() / myCCDiagH0.array();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeCorrectedInnerProduct1()
+{
+  Triplets triplets;
+  myCCM1 = LinearOperator( nbCells( 1 ), nbCells( 1 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto nv = nbCorners( f );
+      if ( nv == 3 ) triangleCorrectedInnerProduct1( triplets, f );
+      else if ( nv == 4 ) quadrangleCorrectedInnerProduct1( triplets, f );
+    }
+  myCCM1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  myCCDiagH1     = myCCM1 * Form::Ones( nbCells( 1 ) );
+  myCCDiagDualH1 = -1.0 * ( Form::Ones( nbCells( 1 ) ).array() / myCCDiagH1.array() );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeCorrectedInnerProduct2()
+{
+  Triplets triplets, triplets2;
+  myCCM2     = LinearOperator( nbCells( 2 ), nbCells( 2 ) );
+  myCCDualH0 = LinearOperator( nbCells( 2 ), nbCells( 2 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      triplets.push_back( { f, f, 1.0 / faceCorrectedArea( f ) } );
+      triplets2.push_back( { f, f, faceCorrectedArea( f ) } );
+    }
+  myCCM2.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  myCCDualH0.setFromTriplets( triplets2.cbegin(), triplets2.cend() );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+triangleCorrectedInnerProduct0( Triplets& triplets, Face f )
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  if ( vtcs.size() != 3 )
+    {
+      trace.error() << "[SurfaceMeshDEC::triangleCorrectedInnerProduct0]"
+                    << " restricted to triangle faces." << std::endl;
+      return;
+    }
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   n = ( myMesh->position( j ) - myMesh->position( i ) )
+    .crossProduct( myMesh->position( k ) - myMesh->position( i ) );
+  const auto& ui = myMesh->vertexNormal( i );
+  const auto& uj = myMesh->vertexNormal( j );
+  const auto& uk = myMesh->vertexNormal( k );
+  const Scalar c = 1.0 / 120.0;
+  const Scalar cii = c * n.dot( 6 * ui + 2 * uj + 2 * uk );
+  const Scalar cij = c * n.dot( 2 * ui + 2 * uj +     uk );
+  const Scalar cik = c * n.dot( 2 * ui +     uj + 2 * uk );
+  const Scalar cjj = c * n.dot( 2 * ui + 6 * uj + 2 * uk );
+  const Scalar cjk = c * n.dot(     ui + 2 * uj + 2 * uk );
+  const Scalar ckk = c * n.dot( 2 * ui + 2 * uj + 6 * uk );
+  triplets.push_back( { i, i, cii } );
+  triplets.push_back( { i, j, cij } );
+  triplets.push_back( { i, k, cik } );
+  triplets.push_back( { j, i, cij } );
+  triplets.push_back( { j, j, cjj } );
+  triplets.push_back( { j, k, cjk } );
+  triplets.push_back( { k, i, cik } );
+  triplets.push_back( { k, j, cjk } );
+  triplets.push_back( { k, k, ckk } );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+quadrangleCorrectedInnerProduct0( Triplets& triplets, Face f )
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  if ( vtcs.size() != 4 )
+    {
+      trace.error() << "[SurfaceMeshDEC::quadrangleCorrectedInnerProduct0]"
+                    << " restricted to quadrangle faces." << std::endl;
+      return;
+    }
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   l = vtcs[ 3 ];
+  const auto xij = myMesh->position( j ) - myMesh->position( i );
+  const auto xil = myMesh->position( l ) - myMesh->position( i );
+  const auto xlk = myMesh->position( k ) - myMesh->position( l );
+  const auto xjk = myMesh->position( k ) - myMesh->position( j );
+  const RealVector nn[ 4 ] =
+    { /* ni */ xij.crossProduct( xil ),
+      /* nj */ xij.crossProduct( xjk ),
+      /* nk */ xlk.crossProduct( xjk ),
+      /* nl */ xlk.crossProduct( xil ) };
+  const Scalar c = 1.0 / 3600.0;
+  // All coefs are computed from polynomial of the form:
+  // s^a (1-s)^a t^b (1-t)^b
+  // Indices are 0,1,2,3 == i,j,k,l
+  const Vertex id[ 4 ] = { i, j, k, l };
+  const int    pa[ 4 ] = { 0, 1, 1, 0 };
+  const int    pb[ 4 ] = { 0, 0, 1, 1 };
+  const double co[ 5 ][ 5 ] =
+    { { 144.0, 36.0, 24.0, 36.0, 144.0 },
+      {  36.0,  9.0,  6.0,  9.0,  36.0 },
+      {  24.0,  6.0,  4.0,  6.0,  24.0 },
+      {  36.0,  9.0,  6.0,  9.0,  36.0 },
+      { 144.0, 36.0, 24.0, 36.0, 144.0 } };
+  for ( int g = 0; g < 4; ++g ) // left 0-form at vertex
+    for ( int h = 0; h < 4; ++h ) // right 0-form at vertex
+      { // Computing coefficients for ( id[ g ], id[ h ] )
+        for ( int u = 0; u < 4; ++u ) // corrected normal at vertex
+          for ( int n = 0; n < 4; ++n ) // naive normal at vertex
+            {
+              const int a = pa[ g ] + pa[ h ] + pa[ u ] + pa[ n ];
+              const int b = pb[ g ] + pb[ h ] + pb[ u ] + pb[ n ];
+              const double coeff = c * co[ a ][ b ]
+                * myMesh->vertexNormal( id[ u ] ).dot( nn[ n ] );
+              triplets.push_back( { id[ g ], id[ h ], coeff } );
+            }
+      }
+}
+
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+triangleCorrectedInnerProduct1( Triplets& triplets, Face f )
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  if ( vtcs.size() != 3 )
+    {
+      trace.error() << "[SurfaceMeshDEC::triangleCorrectedInnerProduct1]"
+                    << " restricted to triangle faces." << std::endl;
+      return;
+    }
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   n = ( myMesh->position( j ) - myMesh->position( i ) )
+    .crossProduct( myMesh->position( k ) - myMesh->position( i ) );
+  const auto& ui = myMesh->vertexNormal( i );
+  const auto& uj = myMesh->vertexNormal( j );
+  const auto& uk = myMesh->vertexNormal( k );
+  // Computing dense inner product on 1-forms.
+  const Scalar c = 1.0 / 120.0;
+  DenseMatrix  A = Bijk( i, j, k ).inverse() * Sijk;
+  DenseMatrix  B = Bijk( j, k, i ).inverse() * Sjki;
+  DenseMatrix  C = Bijk( k, i, j ).inverse() * Skij;
+  DenseMatrix tA = A.transpose();
+  DenseMatrix tB = B.transpose();
+  DenseMatrix tC = C.transpose();
+  DenseMatrix  T = DenseMatrix::Zero( 3, 3 );
+  T += ( c * n.dot( 6 * ui + 2 * uj + 2 * uk ) ) * tA * A;
+  T += ( c * n.dot( 2 * ui + 2 * uj +     uk ) ) * ( tA * B + tB * A );
+  T += ( c * n.dot( 2 * ui +     uj + 2 * uk ) ) * ( tA * C + tC * A );
+  T += ( c * n.dot( 2 * ui + 6 * uj + 2 * uk ) ) * tB * B;
+  T += ( c * n.dot(     ui + 2 * uj + 2 * uk ) ) * ( tB * C + tC * B );
+  T += ( c * n.dot( 2 * ui + 2 * uj + 6 * uk ) ) * tC * C;
+  // Dispatching inner product in sparse mass matrix.
+  const auto e_ij = myMesh->makeEdge( i, j );
+  const auto e_jk = myMesh->makeEdge( j, k );
+  const auto e_ki = myMesh->makeEdge( k, i );
+  const Edge edge_idcs[ 3 ] = { e_ij, e_jk, e_ki };
+  for ( Dimension m = 0; m < 3; ++m )
+    for ( Dimension n = 0; n < 3; ++n )
+      triplets.push_back( { edge_idcs[ m ], edge_idcs[ n ], T( m, n ) } );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+quadrangleCorrectedInnerProduct1( Triplets& triplets, Face f )
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  if ( vtcs.size() != 4 )
+    {
+      trace.error() << "[SurfaceMeshDEC::quadrangleCorrectedInnerProduct1]"
+                    << " restricted to quadrangular faces." << std::endl;
+      return;
+    }
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   l = vtcs[ 3 ];
+  const auto xij = myMesh->position( j ) - myMesh->position( i );
+  const auto xil = myMesh->position( l ) - myMesh->position( i );
+  const auto xlk = myMesh->position( k ) - myMesh->position( l );
+  const auto xjk = myMesh->position( k ) - myMesh->position( j );
+
+  const auto  fc = idxFtoC( f );
+  const auto  nc = nbCorners( f );
+  DenseMatrix A [ 4 ];
+  DenseMatrix tA[ 4 ];
+  for ( Size ni = 0; ni < nc; ni++ )
+    {
+      A [ ni ] = Bc( fc + ni ).inverse() * S( ni, nc );
+      tA[ ni ] = A[ ni ].transpose();
+    }
+  Edge edge_idcs[ 4 ];
+  for ( Size ni = 0; ni < nc; ni++ )
+    edge_idcs[ ni ] = myMesh->makeEdge( vtcs[ ni ], vtcs[ (ni+1) % nc ] );
+  DenseMatrix  T = DenseMatrix::Zero( 4, 4 );
+  const RealVector nn[ 4 ] =
+    { /* ni */ xij.crossProduct( xil ),
+      /* nj */ xij.crossProduct( xjk ),
+      /* nk */ xlk.crossProduct( xjk ),
+      /* nl */ xlk.crossProduct( xil ) };
+  const Scalar c = 1.0 / 3600.0;
+  // All coefs are computed from polynomial of the form:
+  // s^a (1-s)^a t^b (1-t)^b
+  // Edge_Idcs are 0,1,2,3 == i,j,k,l
+  const Vertex id[ 4 ] = { i, j, k, l };
+  const int    pa[ 4 ] = { 0, 1, 1, 0 };
+  const int    pb[ 4 ] = { 0, 0, 1, 1 };
+  const double co[ 5 ][ 5 ] =
+    { { 144.0, 36.0, 24.0, 36.0, 144.0 },
+      {  36.0,  9.0,  6.0,  9.0,  36.0 },
+      {  24.0,  6.0,  4.0,  6.0,  24.0 },
+      {  36.0,  9.0,  6.0,  9.0,  36.0 },
+      { 144.0, 36.0, 24.0, 36.0, 144.0 } };
+  for ( int u = 0; u < 4; ++u ) // corrected normal at vertex
+    for ( int n = 0; n < 4; ++n ) // naive normal at vertex
+      {
+        const double coeff = c * myMesh->vertexNormal( id[ u ] ).dot( nn[ n ] );
+        for ( int g = 0; g < 4; ++g ) // left 0-form at vertex
+          for ( int h = 0; h < 4; ++h ) // right 0-form at vertex
+            { // Computing coefficients for ( id[ g ], id[ h ] )
+              const int a = pa[ g ] + pa[ h ] + pa[ u ] + pa[ n ];
+              const int b = pb[ g ] + pb[ h ] + pb[ u ] + pb[ n ];
+              T += coeff * co[ a ][ b ] * tA[ g ] * A[ h ];
+            }
+      }
+  for ( Dimension m = 0; m < 4; ++m )
+    for ( Dimension n = 0; n < 4; ++n )
+      triplets.push_back( { edge_idcs[ m ], edge_idcs[ n ], T( m, n ) } );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeCorrectedSharp()
+{
+  Triplets triplets;
+  // Reconstruction is at the corner of each face, for coordinates
+  // x,y,z For triangulated surfaces, the size of the operator is 9f x
+  // e, with 9 values per face, in order [ wi_x, wi_y, wi_z, wj_x,
+  // wj_y, wj_z, wk_x, wk_y, wk_z ]^t
+  // myCCSharp = LinearOperator( 9*nbCells( 2 ), nbCells( 1 ) );
+  myCCSharp = LinearOperator( 3*nbCorners(), nbCells( 1 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      if ( vtcs.size() != 3 && vtcs.size() != 4 )
+        {
+          trace.error() << "[SurfaceMeshDEC::computeCorrectedSharp]"
+                        << " restricted to triangle or quad faces." << std::endl;
+          return;
+        }
+      const auto  fc = idxFtoC( f );
+      const auto  nc = nbCorners( f );
+      DenseMatrix A[ 4 ];
+      for ( Size i = 0; i < nc; i++ )
+        A[ i ] = Bc( fc + i ).inverse() * S( i, nc );
+      Edge edge_idcs[ 4 ];
+      for ( Size i = 0; i < nc; i++ )
+        edge_idcs[ i ] = myMesh->makeEdge( vtcs[ i ], vtcs[ (i+1) % nc ] );
+      for ( Dimension x = 0; x < 3; ++x )
+        for ( Dimension n = 0; n < nc; ++n )
+          for ( Size i = 0; i < nc; i++ )
+            triplets.push_back( { 3*(fc+i)+x, edge_idcs[ n ], A[ i ]( x, n ) } );      
+      // const auto   i = vtcs[ 0 ];
+      // const auto   j = vtcs[ 1 ];
+      // const auto   k = vtcs[ 2 ];
+      // DenseMatrix  A = Bijk( i, j, k ).inverse() * Sijk;
+      // DenseMatrix  B = Bijk( j, k, i ).inverse() * Sjki;
+      // DenseMatrix  C = Bijk( k, i, j ).inverse() * Skij;
+      // const auto e_ij = myMesh->makeEdge( i, j );
+      // const auto e_jk = myMesh->makeEdge( j, k );
+      // const auto e_ki = myMesh->makeEdge( k, i );
+      // for ( Dimension x = 0; x < 3; ++x )
+      //   for ( Dimension n = 0; n < 3; ++n )
+      // {
+      //   triplets.push_back( { 9*f+x,   edge_idcs[ n ], A( x, n ) } );
+      //   triplets.push_back( { 9*f+3+x, edge_idcs[ n ], B( x, n ) } );
+      //   triplets.push_back( { 9*f+6+x, edge_idcs[ n ], C( x, n ) } );
+      // }
+    }
+  myCCSharp.setFromTriplets( triplets.cbegin(), triplets.cend() );
+}
+
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeCorrectedFlat()
+{
+  Triplets triplets;
+  // Reduction is from every corner of faces to every edges. So for
+  // triangulated surfaces, the size of the operator is e x 9f, with 9
+  // values per face, in order [ wi_x, wi_y, wi_z, wj_x, wj_y, wj_z,
+  // wk_x, wk_y, wk_z ]^t
+  // myCCFlat = LinearOperator( nbCells( 1 ), 9*nbCells( 2 ) );
+  myCCFlat = LinearOperator( nbCells( 1 ), 3*nbCorners() );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      if ( vtcs.size() != 3 && vtcs.size() != 4 )
+        {
+          trace.error() << "[SurfaceMeshDEC::computeCorrectedFlat]"
+                        << " restricted to triangle or quad faces." << std::endl;
+          return;
+        }
+      // if ( vtcs.size() != 3 )
+      //   {
+      //     trace.error() << "[SurfaceMeshDEC::computeCorrectedFlat]"
+      //                   << " restricted to triangle faces." << std::endl;
+      //     return;
+      //   }
+      const auto  fc = idxFtoC( f );
+      const auto  nc = nbCorners( f );
+      // trace.info() << "face=" << f << " corner=" << fc << " #c=" << nc << std::endl;
+      DenseMatrix tA[ 4 ];
+      for ( Size i = 0; i < nc; i++ )
+        tA[ i ] = SI( i, nc ) * Bc( fc + i );
+      Edge edge_idcs[ 4 ];
+      for ( Size i = 0; i < nc; i++ )
+        edge_idcs[ i ] = myMesh->makeEdge( vtcs[ i ], vtcs[ (i+1) % nc ] );
+      for ( Dimension x = 0; x < 3; ++x )
+        for ( Dimension n = 0; n < nc; ++n )
+          for ( Size i = 0; i < nc; i++ )
+            {
+              // trace.info() << "x=" << x << " n=" << n << " i=" << i << std::endl;
+              // Divide by 2 since each edge is shared by two faces.
+              triplets.push_back
+                ( { edge_idcs[ n ], 3*(fc+i)+x, 0.5 * tA[ i ]( n, x ) });
+            }
+      // const auto   i = vtcs[ 0 ];
+      // const auto   j = vtcs[ 1 ];
+      // const auto   k = vtcs[ 2 ];
+      // DenseMatrix  A = SIijk * Bijk( i, j, k );
+      // DenseMatrix  B = SIjki * Bijk( j, k, i );
+      // DenseMatrix  C = SIkij * Bijk( k, i, j );
+      // const auto e_ij = myMesh->makeEdge( i, j );
+      // const auto e_jk = myMesh->makeEdge( j, k );
+      // const auto e_ki = myMesh->makeEdge( k, i );
+      // const Edge edge_idcs[ 3 ] = { e_ij, e_jk, e_ki };
+      // for ( Dimension x = 0; x < 3; ++x )
+      //   for ( Dimension n = 0; n < 3; ++n )
+      //     {
+      //       // Divide by 2 since each edge is shared by two faces.
+      //       triplets.push_back( { edge_idcs[ n ], 9*f+x,   0.5 * A( n, x ) } );
+      //       triplets.push_back( { edge_idcs[ n ], 9*f+3+x, 0.5 * B( n, x ) } );
+      //       triplets.push_back( { edge_idcs[ n ], 9*f+6+x, 0.5 * C( n, x ) } );
+      //     }
+    }
+  myCCFlat.setFromTriplets( triplets.cbegin(), triplets.cend() );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeCornerVectorInnerProduct()
+{
+  Triplets triplets;
+  // Reconstruction is at the corner of each face, for coordinates x,y,z
+  // So the size of the operator is 9f x 9f, with 9 values per face, in order
+  // [ wi_x, wi_y, wi_z, wj_x, wj_y, wj_z, wk_x, wk_y, wk_z ]^t
+  // myCCC1IP = LinearOperator( 9*nbCells( 2 ), 9*nbCells( 2 ) );
+  myCCC1IP = LinearOperator( 3*nbCorners(), 3*nbCorners() );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const Size   nc = nbCorners( f );
+      const Corner fc = idxFtoC( f );
+      if ( ( nc != 3 ) && ( nc != 4 ) )
+        {
+          trace.error() << "[SurfaceMeshDEC::computeCornerVectorInnerProduct]"
+                        << " restricted to triangle or quad faces." << std::endl;
+          return;
+        }
+      DenseMatrix C = ( nc == 3 )
+        ? triangleCornerVectorInnerProduct( f )
+        : quadrangleCornerVectorInnerProduct( f );
+      for ( Dimension m = 0; m < nc; ++m )
+        for ( Dimension n = 0; n < nc; ++n )
+          for ( Dimension x = 0; x < 3; ++x )
+            triplets.push_back( { 3*(fc+m)+x, 3*(fc+n)+x, C( m, n ) } );
+    }
+  myCCC1IP.setFromTriplets( triplets.cbegin(), triplets.cend() );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend,
+                                TRealPoint, TRealVector>::DenseMatrix
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+triangleCornerVectorInnerProduct( const Face f ) const
+{
+  DenseMatrix C( 3, 3 );
+  const auto vtcs = myMesh->incidentVertices( f );
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   n = ( myMesh->position( j ) - myMesh->position( i ) )
+    .crossProduct( myMesh->position( k ) - myMesh->position( i ) );
+  const auto& ui = myMesh->vertexNormal( i );
+  const auto& uj = myMesh->vertexNormal( j );
+  const auto& uk = myMesh->vertexNormal( k );
+  // Computing dense inner product on 1-forms.
+  const Scalar   c = 1.0 / 120.0;
+  C <<
+    c * n.dot( 6 * ui + 2 * uj + 2 * uk ),
+    c * n.dot( 2 * ui + 2 * uj +     uk ),
+    c * n.dot( 2 * ui +     uj + 2 * uk ),
+    c * n.dot( 2 * ui + 2 * uj +     uk ),
+    c * n.dot( 2 * ui + 6 * uj + 2 * uk ),
+    c * n.dot(     ui + 2 * uj + 2 * uk ),
+    c * n.dot( 2 * ui +     uj + 2 * uk ),
+    c * n.dot(     ui + 2 * uj + 2 * uk ),
+    c * n.dot( 2 * ui + 2 * uj + 6 * uk );
+  return C;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend,
+                                TRealPoint, TRealVector>::DenseMatrix
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+quadrangleCornerVectorInnerProduct( const Face f ) const
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  ASSERT( vtcs.size() == 4
+          && "[SurfaceMeshDEC::quadrangleCorrectedInnerProduct1]"
+          " restricted to quadrangular faces." );
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   l = vtcs[ 3 ];
+  const auto xij = myMesh->position( j ) - myMesh->position( i );
+  const auto xil = myMesh->position( l ) - myMesh->position( i );
+  const auto xlk = myMesh->position( k ) - myMesh->position( l );
+  const auto xjk = myMesh->position( k ) - myMesh->position( j );
+
+  const auto  fc = idxFtoC( f );
+  const auto  nc = nbCorners( f );
+  DenseMatrix  T = DenseMatrix::Zero( 4, 4 );
+  const RealVector nn[ 4 ] =
+    { /* ni */ xij.crossProduct( xil ),
+      /* nj */ xij.crossProduct( xjk ),
+      /* nk */ xlk.crossProduct( xjk ),
+      /* nl */ xlk.crossProduct( xil ) };
+  const Scalar c = 1.0 / 3600.0;
+  // All coefs are computed from polynomial of the form:
+  // s^a (1-s)^a t^b (1-t)^b
+  // Edge_Idcs are 0,1,2,3 == i,j,k,l
+  const Vertex id[ 4 ] = { i, j, k, l };
+  const int    pa[ 4 ] = { 0, 1, 1, 0 };
+  const int    pb[ 4 ] = { 0, 0, 1, 1 };
+  const double co[ 5 ][ 5 ] =
+    { { 144.0, 36.0, 24.0, 36.0, 144.0 },
+      {  36.0,  9.0,  6.0,  9.0,  36.0 },
+      {  24.0,  6.0,  4.0,  6.0,  24.0 },
+      {  36.0,  9.0,  6.0,  9.0,  36.0 },
+      { 144.0, 36.0, 24.0, 36.0, 144.0 } };
+  for ( int u = 0; u < 4; ++u ) // corrected normal at vertex
+    for ( int n = 0; n < 4; ++n ) // naive normal at vertex
+      {
+        const double coeff = c * myMesh->vertexNormal( id[ u ] ).dot( nn[ n ] );
+        for ( int g = 0; g < 4; ++g ) // left 0-form at vertex
+          for ( int h = 0; h < 4; ++h ) // right 0-form at vertex
+            {
+              const int a = pa[ g ] + pa[ h ] + pa[ u ] + pa[ n ];
+              const int b = pb[ g ] + pb[ h ] + pb[ u ] + pb[ n ];
+              T.coeffRef( g, h ) += coeff * co[ a ][ b ]; 
+            }
+      }
+  return T;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+faceArea( Face f ) const
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  double area = 0.0;
+  if ( vtcs.size() == 3 )
+    {
+      const auto   i = vtcs[ 0 ];
+      const auto   j = vtcs[ 1 ];
+      const auto   k = vtcs[ 2 ];
+      const auto   n = ( myMesh->position( j ) - myMesh->position( i ) )
+        .crossProduct( myMesh->position( k ) - myMesh->position( i ) );
+      area = 0.5 * n.norm();
+    }
+  else
+    {
+      const RealPoint b = mesh()->faceCentroid( f );
+      for ( std::size_t m = 0; m < vtcs.size(); ++m )
+        {
+          const auto n = ( myMesh->position( vtcs[ m ] ) - b )
+            .crossProduct( myMesh->position( vtcs[ (m+1)%vtcs.size() ] ) - b );
+          area += n.norm();
+        }
+      area *= 0.5;
+    }
+  return area;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+faceCorrectedArea( Face f ) const
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  switch ( vtcs.size() ) {
+  case 3: return triangleCorrectedArea( f );
+  case 4: return quadrangleCorrectedArea( f );
+  default: trace.error() << "[SurfaceMeshDEC::faceCorrectedArea]"
+                        << " face should be triangular or quadrangular."
+                        << std::endl;
+  }
+  return 0.0;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+triangleCorrectedArea( Face f ) const
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  ASSERT( vtcs.size() == 3 );
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   n = ( myMesh->position( j ) - myMesh->position( i ) )
+    .crossProduct( myMesh->position( k ) - myMesh->position( i ) );
+  const auto& ui = myMesh->vertexNormal( i );
+  const auto& uj = myMesh->vertexNormal( j );
+  const auto& uk = myMesh->vertexNormal( k );
+  const Scalar c = 1.0 / 6.0;
+  return c * n.dot( ui + uj + uk );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+quadrangleCorrectedArea( Face f ) const
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  ASSERT( vtcs.size() == 4 );
+  const auto   i = vtcs[ 0 ];
+  const auto   j = vtcs[ 1 ];
+  const auto   k = vtcs[ 2 ];
+  const auto   l = vtcs[ 3 ];
+  const auto xij = myMesh->position( j ) - myMesh->position( i );
+  const auto xil = myMesh->position( l ) - myMesh->position( i );
+  const auto xlk = myMesh->position( k ) - myMesh->position( l );
+  const auto xjk = myMesh->position( k ) - myMesh->position( j );
+  const RealVector ni = xij.crossProduct( xil );
+  const RealVector nj = xij.crossProduct( xjk );
+  const RealVector nk = xlk.crossProduct( xjk );
+  const RealVector nl = xlk.crossProduct( xil );
+  const auto&      ui = myMesh->vertexNormal( i );
+  const auto&      uj = myMesh->vertexNormal( j );
+  const auto&      uk = myMesh->vertexNormal( k );
+  const auto&      ul = myMesh->vertexNormal( l );
+  const Scalar      c = 1.0 / 36.0;
+  return c * ( ni.dot( 4*ui + 2*uj +   uk + 2*ul )
+               + nj.dot( 2*ui + 4*uj + 2*uk +   ul )
+               + nk.dot(   ui + 2*uj + 4*uk + 2*ul )
+               + nl.dot( 2*ui +   uj + 2*uk + 4*ul ) );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+RealPoint
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+faceCircumcenter( Face f ) const
+{
+  const auto       vtcs = myMesh->incidentVertices( f );
+  const std::size_t nbv = vtcs.size();
+  RealPoint           p;
+  std::size_t         n = 0; 
+  for ( std::size_t i = 0; i < nbv - 2; i++ )
+    for ( std::size_t j = i+1; j < nbv - 1; j++ )
+      for ( std::size_t k = j+1; k < nbv; k++ )
+        {
+          n += 1;
+          p += circumcenter( mesh()->position( vtcs[ i ] ),
+                             mesh()->position( vtcs[ j ] ),
+                             mesh()->position( vtcs[ k ] ) );
+        }
+  return p / (double) n;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+RealPoint
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+circumcenter( RealPoint a, RealPoint b, RealPoint c ) const
+{
+  const RealVector n = ( b - a ).crossProduct( c - a );
+  DenseMatrix A( 3, 3 );
+  A <<
+    ( b[ 0 ] - a[ 0 ] ), ( b[ 1 ] - a[ 1 ] ), ( b[ 2 ] - a[ 2 ] ),
+    ( c[ 0 ] - a[ 0 ] ), ( c[ 1 ] - a[ 1 ] ), ( c[ 2 ] - a[ 2 ] ),
+    n[ 0 ], n[ 1 ], n[ 2 ];
+  DenseVector B( 3 );
+  const auto a2 = a.dot( a );
+  const auto b2 = b.dot( b );
+  const auto c2 = c.dot( c );
+  B << 0.5 * ( b2 - a2 ), 0.5 * ( c2 - a2 ), a.dot( n );
+  const auto P = A.inverse() * B;
+  return RealPoint{ P[ 0 ], P[ 1 ], P[ 2 ] };
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+bool
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+isInFace( RealPoint p, Face f ) const
+{
+  const auto vtcs = myMesh->incidentVertices( f );
+  if ( vtcs.size() == 3 )
+    return isInTriangle( p,
+                         myMesh->position( vtcs[ 0 ] ),
+                         myMesh->position( vtcs[ 1 ] ),
+                         myMesh->position( vtcs[ 2 ] ) );
+  else
+    {
+      const RealPoint a = mesh()->faceCentroid( f );
+      for ( std::size_t m = 0; m < vtcs.size(); ++m )
+        {
+          const RealPoint b = myMesh->position( vtcs[ m ] );
+          const RealPoint c = myMesh->position( vtcs[ (m+1)%vtcs.size() ] );
+          const auto n = ( b - a ).crossProduct( c - a ).getNormalized();
+          const RealPoint pp = p - p.dot( n ) * n; // project onto triangle
+          if ( ( pp - b ).dot( n.crossProduct( c - b ) ) < 0.0 ) return false;
+        }
+    }
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+bool
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+isInTriangle( RealPoint p,
+              RealPoint a, RealPoint b, RealPoint c ) const
+{
+  const RealVector n = ( b - a ).crossProduct( c - a ).getNormalized();
+  p -= p.dot( n ) * n; // project onto triangle abc.
+  return ( p - a ).dot( n.crossProduct( b - a ) ) >= 0.0
+    &&   ( p - b ).dot( n.crossProduct( c - b ) ) >= 0.0
+    &&   ( p - c ).dot( n.crossProduct( a - c ) ) >= 0.0;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+edgeLength( Edge e ) const
+{
+  const auto vtcs = mesh()->edgeVertices( e );
+  return ( mesh()->position( vtcs.first ) - mesh()->position( vtcs.second ) )
+    .norm();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+edgeDualLength( Edge e ) const
+{
+  // Dual length is more complex to compute, since the mesh may not be
+  // triangulated, or even non manifold.  Strategy here is to sum the
+  // distance to edge midpoint for each neighboring face.
+  const auto   vtcs = mesh()->edgeVertices( e );
+  const RealPoint a = mesh()->position( vtcs.first );
+  const RealPoint b = mesh()->position( vtcs.second );
+  const RealPoint m = 0.5 * ( a + b );
+  const auto lfaces = mesh()->edgeLeftFaces( e );
+  const auto rfaces = mesh()->edgeRightFaces( e );
+  double le = 0.0;
+  for ( auto&& f : lfaces )
+    {
+      const RealPoint  c = mesh()->faceCentroid( f );
+      const RealVector n = ( b - a ).crossProduct( c - a ).getNormalized();
+      const RealPoint  d = faceCircumcenter( f );
+      const bool    same = ( d - a ).dot( n.crossProduct( b - a ) ) >= 0.0;
+      le += ( same ? 1.0 : -1.0 ) * ( d - m ).norm();
+    }
+  for ( auto&& f : rfaces )
+    {
+      const RealPoint  c = mesh()->faceCentroid( f );
+      const RealVector n = ( c - a ).crossProduct( b - a ).getNormalized();
+      const RealPoint  d = faceCircumcenter( f );
+      const bool    same = ( d - a ).dot( n.crossProduct( b - a ) ) <= 0.0;
+      le += ( same ? 1.0 : -1.0 ) * ( d - m ).norm();
+    }
+  return fabs( le );
+  // RealPoint lcc, rcc;
+  // int nlcc = 0;
+  // int nrcc = 0;
+  // for ( auto&& f : mesh()->edgeLeftFaces( e ) )
+  //   lcc += faceCircumcenter( f ), nlcc += 1;
+  // for ( auto&& f : mesh()->edgeRightFaces( e ) )
+  //   rcc += faceCircumcenter( f ), nrcc += 1;
+  // if ( nlcc != 0 ) lcc /= (double) nlcc;
+  // if ( nrcc != 0 ) rcc /= (double) nrcc;
+  // if ( nlcc == 0 ) return ( rcc - m ).norm();
+  // if ( nrcc == 0 ) return ( lcc - m ).norm();
+  // return ( lcc - rcc ).norm();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+vertexDualArea( Vertex v ) const
+{
+  double area = 0.0;
+  const RealPoint x = mesh()->position( v );
+  std::vector< RealPoint > ccenters;
+  for ( auto&& f : mesh()->incidentFaces( v ) )
+    ccenters.push_back( faceCircumcenter( f ) );
+  ccenters.push_back( ccenters.front() );
+  for ( std::size_t i = 0; i < ccenters.size() - 1; i++ )
+    area += ( ccenters[ i ] - x ).crossProduct( ccenters[ i+1 ] - x ).norm();
+  return 0.5 * area;
+}
+
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+computeAverageOperators()
+{
+  Triplets triplets;
+  myAvgCtoF = LinearOperator( nbCells( 2 ), nbCorners() );
+  Corner c = 0;
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const Size nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i )
+        triplets.push_back( { f, c + i,   1.0/(double)nc } );
+      c += nc;
+    }
+  myAvgCtoF.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  mySumCtoF = LinearOperator( nbCells( 2 ), nbCorners() );
+  c = 0;
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const Size nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i )
+        triplets.push_back( { f, c + i,   1.0 } );
+      c += nc;
+    }
+  mySumCtoF.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  myAvgVtoE = LinearOperator( nbCells( 1 ), nbCells( 0 ) );
+  for ( Edge e = 0; e < myMesh->nbEdges(); ++e )
+    {
+      const auto vtcs = myMesh->edgeVertices( e );
+      triplets.push_back( { e, vtcs.first,  0.5 } );
+      triplets.push_back( { e, vtcs.second, 0.5 } );
+    }
+  myAvgVtoE.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  myAvgCtoE = LinearOperator( nbCells( 1 ), nbCorners() );
+  c = 0;
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const Size nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i )
+        {
+          const auto   e = myMesh->makeEdge( vtcs[ i ], vtcs[ (i+1)%nc ] );
+          const auto nbf = 1.0/(double)(2 * myMesh->edgeFaces( e ).size());
+          triplets.push_back( { e, c+i,          nbf } );
+          triplets.push_back( { e, c+(i+1)%nc,   nbf } );
+        }
+      c += nc;
+    }
+  myAvgCtoE.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  c = 0;
+  mySumC1toC = LinearOperator( nbCorners(), nbCorners() * 3 );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const Size nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i )
+        {
+          triplets.push_back( { c,   3*c,     1.0 } );
+          triplets.push_back( { c,   3*c+1,   1.0 } );
+          triplets.push_back( { c,   3*c+2,   1.0 } );
+        }
+      c += nc;
+    }  
+  mySumC1toC.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  c = 0;
+  mySumC1toC1 = LinearOperator( nbCorners() * 3, nbCorners() * 3 );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const Size nc = nbCorners( f );
+      for ( Dimension n = 0; n < 3; ++n )
+        for ( Size i = 0; i < nc; ++i )
+          {
+            triplets.push_back( { 3*(c+i)+n,   3*(c+i),     1.0 } );
+            triplets.push_back( { 3*(c+i)+n,   3*(c+i)+1,   1.0 } );
+            triplets.push_back( { 3*(c+i)+n,   3*(c+i)+2,   1.0 } );
+          }
+      c += nc;
+    }  
+  mySumC1toC1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  mySumV1toV = LinearOperator( nbCells( 0 ), nbCells( 0 ) * 3 );
+  for ( Vertex v = 0; v < myMesh->nbVertices(); ++v )
+    {
+      triplets.push_back( { v,   3*v,     1.0 } );
+      triplets.push_back( { v,   3*v+1,   1.0 } );
+      triplets.push_back( { v,   3*v+2,   1.0 } );
+    }  
+  mySumV1toV.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  mySumV1toV1 = LinearOperator( nbCells( 0 ) * 3, nbCells( 0 ) * 3 );
+  for ( Vertex v = 0; v < myMesh->nbVertices(); ++v )
+    {
+      triplets.push_back( { 3*v,   3*v,     1.0 } );
+      triplets.push_back( { 3*v,   3*v+1,   1.0 } );
+      triplets.push_back( { 3*v,   3*v+2,   1.0 } );
+      triplets.push_back( { 3*v+1, 3*v,     1.0 } );
+      triplets.push_back( { 3*v+1, 3*v+1,   1.0 } );
+      triplets.push_back( { 3*v+1, 3*v+2,   1.0 } );
+      triplets.push_back( { 3*v+2, 3*v,     1.0 } );
+      triplets.push_back( { 3*v+2, 3*v+1,   1.0 } );
+      triplets.push_back( { 3*v+2, 3*v+2,   1.0 } );
+    }  
+  mySumV1toV1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  
+  myAvgFtoE = LinearOperator( nbCells( 1 ), nbCells( 2 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const Size   nc = vtcs.size();
+      for ( Size i = 0; i < nc; i++ )
+        {
+          const Edge e = myMesh->makeEdge( vtcs[ i ], vtcs[ (i+1)%nc ] );
+          const auto nbf = 1.0/(double)(myMesh->edgeFaces( e ).size());
+          triplets.push_back( { e, f, nbf } );
+        }
+    }
+  myAvgFtoE.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  c = 0;
+  mySumC1toF = LinearOperator( nbCells( 2 ), nbCorners() * 3 );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const Size nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i )
+        for ( Dimension n = 0; n < 3; ++n )
+          triplets.push_back( { f, 3*(c+i)+n,   1.0 } );
+      c += nc;
+    }  
+  mySumC1toF.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  c = 0;
+  myAvgC1toV1 = LinearOperator( 3*nbCells( 0 ), nbCorners() * 3 );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const Size   nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i ) // for each corner vertex
+        {
+          const Vertex  v = vtcs[ i ];
+          const double cv = 1.0 / (double) myMesh->incidentFaces( v ).size();
+          for ( Dimension n = 0; n < 3; ++n )
+            triplets.push_back( { 3*v+n,   3*(c+i)+n,   cv } );
+        }
+      c += nc;
+    }
+  myAvgC1toV1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  c = 0;
+  myV1toC1 = LinearOperator( nbCorners() * 3, 3*nbCells( 0 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const Size   nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i ) // for each corner vertex
+        {
+          const Vertex  v = vtcs[ i ];
+          for ( Dimension n = 0; n < 3; ++n )
+            triplets.push_back( { 3*(c+i)+n, 3*v+n, 1.0 } );
+        }
+      c += nc;
+    }
+  myV1toC1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+
+  c = 0;
+  myVtoC = LinearOperator( nbCorners(), nbCells( 0 ) );
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const Size   nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i ) // for each corner vertex
+        {
+          const Vertex  v = vtcs[ i ];
+          triplets.push_back( { c+i, v, 1.0 } );
+        }
+      c += nc;
+    }
+  myVtoC.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend,
+                                TRealPoint, TRealVector>::DenseMatrix
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+Bc( const Corner c ) const
+{
+  const Face   f  = idxCtoF( c );
+  const Corner c1 = idxFtoC( f );
+  const auto    a = c - c1;
+  const auto    n = nbCorners( f );
+  ASSERT( a < n );
+  const auto vtcs = myMesh->incidentVertices( f );
+  return Bijk( vtcs[ a ], vtcs[ ( a + 1 ) % n ], vtcs[ ( a + n - 1 ) % n ] );
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend,
+                                TRealPoint, TRealVector>::DenseMatrix
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+Bijk( Vertex i, Vertex j, Vertex k ) const
+{
+  auto xij = ( i < j )
+    ? myMesh->position( j ) - myMesh->position( i )
+    : myMesh->position( i ) - myMesh->position( j );
+  auto xik = ( i < k )
+    ? myMesh->position( k ) - myMesh->position( i )
+    : myMesh->position( i ) - myMesh->position( k );
+  const auto& ui = myMesh->vertexNormal( i );
+  const auto& uj = myMesh->vertexNormal( j );
+  const auto& uk = myMesh->vertexNormal( k );
+  // Computes the geodesic length along xi -- xj projected
+  // orthogonally to the mean vector (ui+uj).
+  const auto uij = ( ui+uj ).getNormalized();
+  if ( std::isnan( uij.norm() ) )
+    trace.warning() << "NaN at uij " << i << " " << j << std::endl;
+  const auto uik = ( ui+uk ).getNormalized();
+  if ( std::isnan( uik.norm() ) )
+    trace.warning() << "NaN at uik " << i << " " << k << std::endl;
+  const auto lij = ( xij - xij.dot( uij ) * uij ).norm();
+  const auto lik = ( xik - xik.dot( uik ) * uik ).norm();
+  const double ui_dot_uj= ui.dot( uj );
+  const double ui_dot_uk= ui.dot( uk );
+  const double theta_ij = 0.5 * acos( ui_dot_uj <= 1.0 ? ui_dot_uj : 1.0 );
+  const double theta_ik = 0.5 * acos( ui_dot_uk <= 1.0 ? ui_dot_uk : 1.0 );
+  xij -= xij.dot( ui ) * ui;
+  xik -= xik.dot( ui ) * ui;
+  const auto pij = xij.norm();
+  const auto pik = xik.norm();
+  xij *= ( pij < 1e-8 ) ? 1.0 : lij / pij;
+  xik *= ( pik < 1e-8 ) ? 1.0 : lik / pik;
+  // not sure that it is really useful
+  xij *= ( theta_ij < 1e-8 ) ? 1.0 : theta_ij / sin( theta_ij );
+  xik *= ( theta_ik < 1e-8 ) ? 1.0 : theta_ik / sin( theta_ik );
+  if ( std::isnan( xij.norm() ) )
+    trace.warning() << "NaN at xij " << i << " " << j
+                    << " theta_ij=" << theta_ij
+                    << " lij=" << lij
+                    << " pij=" << pij
+                    << std::endl;
+  if ( std::isnan( xik.norm() ) )
+    trace.warning() << "NaN at xik " << i << " " << k
+                    << " theta_ik=" << theta_ik
+                    << " lik=" << lik
+                    << " pik=" << pik
+                    << std::endl;
+  DenseMatrix B( 3, 3 );
+  B << xij[ 0 ], xij[ 1 ], xij[ 2 ],
+    xik[ 0 ] , xik[ 1 ] , xik[ 2 ],
+    ui[ 0 ] , ui[ 1 ] , ui[ 2 ];
+  return B;
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+initFaceMatrices()
+{
+  // Select 1-form values for corners (triangular faces)
+  Sijk = DenseMatrix( 3, 3 );
+  Sijk << 1, 0, 0,  0, 0, 1,  0, 0, 0;
+  Sjki = DenseMatrix( 3, 3 );
+  Sjki << 0, 1, 0,  1, 0, 0,  0, 0, 0;
+  Skij = DenseMatrix( 3, 3 );
+  Skij << 0, 0, 1,  0, 1, 0,  0, 0, 0;
+  // Select corners for 1-forms (pseudo inverses of S matrices) (triangular faces)
+  SIijk = 0.5 * Sijk.transpose();
+  SIjki = 0.5 * Sjki.transpose();
+  SIkij = 0.5 * Skij.transpose();
+  
+  // Select 1-form values for corners (quadrangular faces)
+  Sijkl = DenseMatrix( 3, 4 );
+  Sijkl << 1, 0, 0, 0,  0, 0, 0, 1,  0, 0, 0, 0;
+  Sjkli = DenseMatrix( 3, 4 );
+  Sjkli << 0, 1, 0, 0,  1, 0, 0, 0,  0, 0, 0, 0;
+  Sklij = DenseMatrix( 3, 4 );
+  Sklij << 0, 0, 1, 0,  0, 1, 0, 0,  0, 0, 0, 0;
+  Slijk = DenseMatrix( 3, 4 );
+  Slijk << 0, 0, 0, 1,  0, 0, 1, 0,  0, 0, 0, 0;
+  // Select corners for 1-forms (half of pseudo inverses of S
+  // matrices) (quadrangular faces)
+  SIijkl = 0.5 * Sijkl.transpose();
+  SIjkli = 0.5 * Sjkli.transpose();
+  SIklij = 0.5 * Sklij.transpose();
+  SIlijk = 0.5 * Slijk.transpose();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+initIndexMaps()
+{
+  /// the mapping face -> 1st corner index (f -> 3*f if surface is triangulated)
+  myNbCorners.resize( myMesh->nbFaces() );
+  myFtoCIdx.resize( myMesh->nbFaces() + 1 );
+  myCtoFIdx.clear();
+  myNbTriangles   = 0;
+  myNbQuadrangles = 0;
+  Corner        c = 0;
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto  vtcs = myMesh->incidentVertices( f );
+      const Size    nb = vtcs.size();
+      if ( nb == 3 )      myNbTriangles   += 1;
+      else if ( nb == 4 ) myNbQuadrangles += 1;
+      myNbCorners[ f ] = nb;
+      myFtoCIdx  [ f ] = c;
+      for ( Size i = 0; i < nb; ++i )
+        myCtoFIdx.push_back( f );
+      c += nb;
+    }
+  myFtoCIdx[ myMesh->nbFaces() ] = c; // gives the number of corners.
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+double
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+nnzPerRow( const LinearOperator& op ) const
+{
+  return (double) op.nonZeros() / (double) op.rows();
+}
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::DenseVector
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+cornerAngles( ) const
+{
+  DenseVector angles(nbCorners() );
+  
+  for( Face f=0; f < myMesh->nbFaces(); ++f)
+  {
+     const auto vtcs = mesh()->incidentVertices( f );
+     const auto idFirstCorner = idxFtoC( f );
+     for( Corner c = 0; c < vtcs.size(); ++c)
+     {
+        auto v = vtcs[ c ];
+        auto v_pred= vtcs[ (c + vtcs.size() -1 )% vtcs.size() ];
+        auto v_next= vtcs[ (c+1)% vtcs.size() ];
+        RealVector a = (v_next - v).getNormalized();
+        RealVector b = (v - v_pred).getNormalized();
+        double angle = std::acos( a.dot(b));
+        
+        angles[idFirstCorner+c] = angle;
+     }
+  }
+  return angles;
+}
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::LinearOperator
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+edgeLaplacian() const
+{
+  LinearOperator L( myMesh->nbEdges(), myMesh->nbEdges() );
+  Triplets triplets;
+  
+  auto cotalpha=[&](Vertex i , Vertex j , Vertex k)
+  {
+    RealVector u=(myMesh->position(i) - myMesh->position(j)).getNormalized();
+    RealVector v=(myMesh->position(k) - myMesh->position(j)).getNormalized();
+    return u.dot(v) / u.crossProduct(v).norm();
+  };
+  
+  for(Edge edge=0; edge < myMesh->nbEdges(); ++edge)
+  {
+    /*
+                  i
+                  --\----------------- l
+                -/   \             -/
+              -/      |    B     -/
+            -/        e        -/
+          -/     A     \     -/
+        -/              \  -/
+      -/-----------------|/
+    k                      j
+     */
+    const auto adjFaces = myMesh->edgeFaces( edge );
+    const auto edgeV = myMesh->edgeVertices( edge );
+    const auto i = edgeV.first;
+    const auto j = edgeV.second;
+    if(adjFaces.size() == 2) 
+    {
+        //Face A
+        auto vtsA = myMesh->incidentVertices( adjFaces[0] );
+        int cpt=0;
+        while (( cpt < 3) && ((vtsA[cpt] == i ) || (vtsA[cpt] == j))) cpt++;
+        ASSERT_MSG(cpt <   3, "unable to found the third vertex af the face");
+        const auto k = vtsA[cpt];
+        
+        //Face B
+        const auto vtsB = myMesh->incidentVertices( adjFaces[1] );
+        cpt=0;
+        while (( cpt < 3) && ((vtsB[cpt] == i ) || (vtsB[cpt] == j)))  cpt++;
+        ASSERT_MSG(cpt < 3, "unable to found the third vertex af the face");
+        const auto l = vtsB[cpt];
+        
+        //Edges
+        auto ik = myMesh->makeEdge(i,k);
+        auto jk = myMesh->makeEdge(j,k);
+        auto il = myMesh->makeEdge(i,l);
+        auto jl = myMesh->makeEdge(j,l);
+        ASSERT(edge != ik);
+        ASSERT(edge != il);
+        ASSERT(edge != jk);
+        ASSERT(edge != jl);
+        double diag = cotalpha(i,j,k) + cotalpha(k,i,j) + cotalpha(l,i,j) + cotalpha(i,j,l);
+        
+        triplets.push_back({ edge, edge, diag});
+        
+        triplets.push_back({ edge, ik, -cotalpha(k,i,j) });
+        triplets.push_back({ edge, jk, -cotalpha(i,j,k) });
+        triplets.push_back({ edge, il, -cotalpha(l,i,j) });
+        triplets.push_back({ edge, jl, -cotalpha(i,j,l) });
+    } else {
+        //Face A
+        auto vtsA = myMesh->incidentVertices( adjFaces[0] );
+        int cpt=0;
+        while (( cpt < 3) && ((vtsA[cpt] == i ) || (vtsA[cpt] == j))) cpt++;
+        ASSERT_MSG(cpt <   3, "unable to found the third vertex af the face");
+        const auto k = vtsA[cpt];
+        
+        
+        //Edges
+        auto ik = myMesh->makeEdge(i,k);
+        auto jk = myMesh->makeEdge(j,k);
+        ASSERT(edge != ik);
+        ASSERT(edge != jk);
+        double diag = cotalpha(i,j,k) + cotalpha(k,i,j);
+        
+        triplets.push_back({ edge, edge, diag});
+        
+        triplets.push_back({ edge, ik, -cotalpha(k,i,j) });
+        triplets.push_back({ edge, jk, -cotalpha(i,j,k) });
+    }
+  }
+  L.setFromTriplets(triplets.begin(), triplets.end());
+  return -2.0*L;
+}
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+typename DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::LinearOperator
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+edgeInnerProduct() const
+{
+  LinearOperator L( myMesh->nbEdges(), myMesh->nbEdges() );
+  Triplets triplets;
+  for ( Face f = 0; f < myMesh->nbFaces(); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices(f);
+      ASSERT_MSG( vtcs.size() == 3,
+                  "This Edge inner product only makes sense for triangulated meshes." );
+      const auto i = vtcs[ 0 ];
+      const auto j = vtcs[ 1 ];
+      const auto k = vtcs[ 2 ];
+      const auto a = mesh()->faceArea( f ) / 3.0;
+      const Edge e_ij = myMesh->makeEdge( i, j ); //Expensive
+      const Edge e_jk = myMesh->makeEdge( j, k ); //Expensive
+      const Edge e_ki = myMesh->makeEdge( k, i ); //Expensive
+      triplets.push_back( { e_ij, e_ij, a } );
+      triplets.push_back( { e_jk, e_jk, a } );
+      triplets.push_back( { e_ki, e_ki, a } );
+    }
+  L.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  return L;
+}
+
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+initDiscreteExteriorCalculusOperators()
+{
+  Triplets triplets, triplets_dual;
+
+  trace.beginBlock( "Init mass matrix M0 for 0-forms" );
+  myDECM0     = LinearOperator( nbCells( 0 ), nbCells( 0 ) );
+  myDECDualH2 = LinearOperator( nbCells( 0 ), nbCells( 0 ) );
+  for ( Vertex v = 0; v < (size_t)nbCells( 0 ); ++v )
+    {
+      const double a = vertexDualArea( v );
+      triplets.push_back( { v, v, a } );
+      triplets_dual.push_back( { v, v, 1.0 / a } );
+    }
+  myDECM0.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  myDECDualH2.setFromTriplets( triplets_dual.cbegin(), triplets_dual.cend() );
+  triplets.clear();
+  triplets_dual.clear();
+  trace.info() << "M0=" << myDECM0.rows() << "x" << myDECM0.cols()
+               << " nnz=" << myDECM0.nonZeros()
+               << " nnz/row=" << nnzPerRow( myDECM0 ) << std::endl;
+  checkNaNInSparseMatrix( myDECM0, "M0" );
+  checkSymmetryInSparseMatrix( myDECM0, "M0" );
+  trace.endBlock();
+
+  trace.beginBlock( "Init mass matrix M1 for 0-forms" );
+  myDECM1     = LinearOperator( nbCells( 1 ), nbCells( 1 ) );
+  myDECDualH1 = LinearOperator( nbCells( 1 ), nbCells( 1 ) );
+  for ( Edge e = 0; e < (size_t)nbCells( 1 ); ++e )
+    {
+      double  l = edgeLength( e );
+      double dl = edgeDualLength( e );
+      double dl_over_l = dl / std::max( l, 1e-16);
+      dl_over_l = std::max( 0.01, std::min( dl_over_l, 100.0 ) );
+      // l  = std::max( 1e-8, l );
+      // if ( fabs( dl ) < 1e-8 ) dl = 1e-8;
+      // std::cout << e << " l=" << l << " dl=" << dl << std::endl;
+      triplets.push_back( { e, e, dl_over_l } );
+      triplets_dual.push_back( { e, e, - 1.0 / dl_over_l } ); // Dual Hodge-1 is negative
+    }
+  myDECM1.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  myDECDualH1.setFromTriplets( triplets_dual.cbegin(), triplets_dual.cend() );
+  triplets.clear();
+  triplets_dual.clear();
+  trace.info() << "M1=" << myDECM1.rows() << "x" << myDECM1.cols()
+               << " nnz=" << myDECM1.nonZeros()
+               << " nnz/row=" << nnzPerRow( myDECM1 ) << std::endl;
+  checkNaNInSparseMatrix( myDECM1, "M1" );
+  checkSymmetryInSparseMatrix( myDECM1, "M1" );
+  trace.endBlock();
+
+  trace.beginBlock( "Init mass matrix M2 for 0-forms" );
+  myDECM2     = LinearOperator( nbCells( 2 ), nbCells( 2 ) );
+  myDECDualH0 = LinearOperator( nbCells( 2 ), nbCells( 2 ) );
+  for ( Face f = 0; f < (size_t)nbCells( 2 ); ++f )
+    {
+      const double a = faceArea( f );
+      triplets.push_back( { f, f, 1.0 / a } );
+      triplets_dual.push_back( { f, f, a } );
+    }
+  myDECM2.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  myDECDualH0.setFromTriplets( triplets_dual.cbegin(), triplets_dual.cend() );
+  triplets.clear();
+  triplets_dual.clear();
+  trace.info() << "M2=" << myDECM2.rows() << "x" << myDECM2.cols()
+               << " nnz=" << myDECM2.nonZeros()
+               << " nnz/row=" << nnzPerRow( myDECM2 ) << std::endl;
+  checkNaNInSparseMatrix( myDECM2, "M2" );
+  checkSymmetryInSparseMatrix( myDECM2, "M2" );
+  trace.endBlock();
+
+  trace.beginBlock( "Init Left Laplacian matrix LL0 for 0-forms" );
+  myDECLL0    = -1.0 * D0().transpose() * decH1() * D0();
+  trace.info() << "LL0=" << myDECLL0.rows() << "x" << myDECLL0.cols()
+               << " nnz=" << myDECLL0.nonZeros()
+               << " nnz/row=" << nnzPerRow( myDECLL0 ) << std::endl;
+  checkNaNInSparseMatrix( myDECLL0, "LL0" );
+  checkSymmetryInSparseMatrix( myDECLL0, "LL0" );
+  trace.endBlock();
+
+  trace.beginBlock( "Init Laplacian matrix L0 for 0-forms" );
+  myDECL0     = decDualH2() * myDECLL0;
+  trace.info() << "L0=" << myDECL0.rows() << "x" << myDECL0.cols()
+               << " nnz=" << myDECL0.nonZeros()
+               << " nnz/row=" << nnzPerRow( myDECL0 ) << std::endl;
+  checkNaNInSparseMatrix( myDECL0, "L0" );
+  checkSymmetryInSparseMatrix( myDECL0, "L0" );
+  trace.endBlock();
+
+  trace.beginBlock( "Init gradient operator for 0-forms" );
+  Triplets gtriplets[ 3 ];
+  myDECFaceGrad0x = LinearOperator( nbCells( 2 ), nbCells( 0 ) );
+  myDECFaceGrad0y = LinearOperator( nbCells( 2 ), nbCells( 0 ) );
+  myDECFaceGrad0z = LinearOperator( nbCells( 2 ), nbCells( 0 ) );
+  for ( Face f = 0; f < (size_t)nbCells( 2 ); ++f )
+    {
+      const auto  vtcs = myMesh->incidentVertices( f );
+      const Size    nb = vtcs.size();
+      if ( nb != 3 ) continue;
+      const RealVector xedge[ 3 ] =
+        { myMesh->position( vtcs[ 2 ] ) - myMesh->position( vtcs[ 1 ] ),
+          myMesh->position( vtcs[ 0 ] ) - myMesh->position( vtcs[ 2 ] ),
+          myMesh->position( vtcs[ 1 ] ) - myMesh->position( vtcs[ 0 ] ) };
+      auto n            = xedge[ 0 ].crossProduct( xedge[ 1 ] );
+      const auto twiceA = n.norm();
+      n                /= twiceA;
+      for ( std::size_t i = 0; i < nb; ++i )
+        {
+          const RealVector w = n.crossProduct( xedge[ i ] ) / twiceA;
+          for ( Dimension x = 0; x < 3; ++x )
+            gtriplets[ x ].push_back( { f, vtcs[ i ], w[ x ] } );
+        }
+    }
+  myDECFaceGrad0x.setFromTriplets( gtriplets[ 0 ].cbegin(), gtriplets[ 0 ].cend() );
+  myDECFaceGrad0y.setFromTriplets( gtriplets[ 1 ].cbegin(), gtriplets[ 1 ].cend() );
+  myDECFaceGrad0z.setFromTriplets( gtriplets[ 2 ].cbegin(), gtriplets[ 2 ].cend() );
+  trace.endBlock();
+}
+
+//-----------------------------------------------------------------------------
+template < typename TLinearAlgebraBackend,
+           typename TRealPoint, typename TRealVector >
+void
+DGtal::SurfaceMeshDEC< TLinearAlgebraBackend, TRealPoint, TRealVector>::
+initPiecewiseConstantCalculusOperators( bool trivial_metric )
+{
+  Triplets triplets;
+
+  trace.beginBlock( "Init mass matrix MU for U-forms" );
+  myPCCMU     = LinearOperator( nbCells( 2 ), nbCells( 2 ) );
+  for ( Face f = 0; f < nbCells( 2 ); ++f )
+    triplets.push_back( { f, f, trivial_metric ? 1.0 : faceArea( f ) } );
+  myPCCMU.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+
+  trace.beginBlock( "Init mass matrix MV for V-forms" );
+  myPCCMV     = LinearOperator( nbCells( 1 ), nbCells( 1 ) );
+  for ( Edge e = 0; e < nbCells( 1 ); ++e )
+    triplets.push_back( { e, e, trivial_metric ? 1.0 : edgeLength( e ) } );
+  myPCCMV.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+
+  trace.beginBlock( "Init mass matrix MW for W-forms" );
+  myPCCMW = LinearOperator( nbCorners(), nbCorners() );
+  Corner c = 0;
+  for ( Face f = 0; f < nbCells( 2 ); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const auto    b = mesh()->faceCentroid( f );
+      const Size   nc = nbCorners( f );
+      for ( Size i = 0; i < nc; ++i ) // for each corner vertex
+        {
+          const Vertex  v = vtcs[ i ];
+          const double  l = ( mesh()->position( v ) - b ).norm();
+          triplets.push_back( { c+i, c+i, trivial_metric ? 1.0 : l } );
+        }
+      c += nc;
+    }      
+  myPCCMW.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+
+  trace.beginBlock( "Init divergence M operator for V-forms" );
+  myPCCDivM     = LinearOperator( nbCells( 2 ), nbCells( 1 ) );
+  for ( Face f = 0; f < nbCells( 2 ); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const double  a = faceArea( f );
+      const Size    n = vtcs.size();
+      for ( Size i = 0; i < n; ++i ) // for each edge
+        {
+          const Edge   e = mesh()->makeEdge( vtcs[ i ], vtcs[ (i+1)%n ] );
+          const bool   s = mesh()->edgeVertices( e ).first == vtcs[ i ];
+          const double  l = edgeLength( e );
+          //const double dl = edgeDualLength( e );
+          //double l_over_dl = l / std::max( dl, 1e-16);
+          //l_over_dl = std::max( 0.01, std::min( l_over_dl, 100.0 ) );
+          triplets.push_back( { f, e,
+                ( trivial_metric ? -1.0 : - l / a ) * ( s ? 1.0 : -1.0 ) } );
+        }
+    }
+  myPCCDivM.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+
+  trace.beginBlock( "Init gradient E operator for V-forms" );
+  c = 0;
+  myPCCGradE     = LinearOperator( nbCorners(), nbCells( 1 ) );
+  for ( Face f = 0; f < nbCells( 2 ); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const Size    n = vtcs.size();
+      for ( Size i = 0; i < n; ++i ) // for each edge
+        {
+          const Edge  ep = mesh()->makeEdge( vtcs[ (i+n-1) % n ], vtcs[ i ] );
+          const Edge  en = mesh()->makeEdge( vtcs[ i ], vtcs[ (i+1) % n ] );
+          triplets.push_back( { c+i, ep,  1.0 } );
+          triplets.push_back( { c+i, en, -1.0 } );
+        }
+      c += n;
+    }
+  myPCCGradE.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+
+  trace.beginBlock( "Init divergence E operator W-forms" );
+  myPCCDivE = LinearOperator( nbCells( 1 ), nbCorners() );
+  c = 0;
+  for ( Face f = 0; f < nbCells( 2 ); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const auto    b = mesh()->faceCentroid( f );
+      const Size   nc = nbCorners( f );
+      const double  a = faceArea( f );
+      for ( Size i = 0; i < nc; ++i ) // for each corner vertex
+        {
+          const Vertex  v = vtcs[ i ];
+          const double  l = ( mesh()->position( v ) - b ).norm();
+          const Edge  ep = mesh()->makeEdge( vtcs[ (i+nc-1) % nc ], v );
+          const Edge  en = mesh()->makeEdge( v, vtcs[ (i+1) % nc ] );
+          triplets.push_back( { ep, c+i,
+                trivial_metric ? -1.0 : ( - l / edgeLength( ep ) ) } );
+          triplets.push_back( { en, c+i,
+                trivial_metric ?  1.0 : (   l / edgeLength( en ) ) } );
+        }
+      c += nc;
+    }      
+  myPCCDivE.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+
+  trace.beginBlock( "Init Laplacian E operator W-forms" );
+  myPCCLapE = LinearOperator( nbCells( 1 ), nbCells( 1 ) );
+  for ( Face f = 0; f < nbCells( 2 ); ++f )
+    {
+      const auto vtcs = myMesh->incidentVertices( f );
+      const auto    b = mesh()->faceCentroid( f );
+      const Size   nc = nbCorners( f );
+      const double  a = faceArea( f );
+      for ( Size i = 0; i < nc; ++i ) // for each corner vertex
+        {
+          const Vertex  v = vtcs[ i ];
+          const double  l = ( mesh()->position( v ) - b ).norm();
+          const Edge   ep = mesh()->makeEdge( vtcs[ (i+nc-1) % nc ], v );
+          const Edge   en = mesh()->makeEdge( v, vtcs[ (i+1) % nc ] );
+          triplets.push_back( { ep, en,
+                trivial_metric ?  1.0 : (   l / edgeLength( ep ) ) } );
+          triplets.push_back( { en, ep,
+                trivial_metric ?  1.0 : (   l / edgeLength( en ) ) } );
+          triplets.push_back( { ep, ep,
+                trivial_metric ? -1.0 : ( - l / edgeLength( ep ) ) } );
+          triplets.push_back( { en, en,
+                trivial_metric ? -1.0 : ( - l / edgeLength( en ) ) } );
+        }
+    }      
+  myPCCLapE.setFromTriplets( triplets.cbegin(), triplets.cend() );
+  triplets.clear();
+  trace.endBlock();
+  
+  trace.beginBlock( "Check LapE matrix for V-forms" );
+  LinearOperator T = pccDivE() * pccGradE() - myPCCLapE;
+  double minc = 0.0;
+  double maxc = 0.0;
+  for ( int k = 0; k < T.outerSize(); ++k )
+    for ( typename LinearOperator::InnerIterator it( T,k ); it; ++it)
+      {
+        minc = std::min( it.value(), minc );
+        maxc = std::max( it.value(), maxc );
+        // it.row(), it.col(), it.index(); // inner index
+      }
+  trace.info() << "norm(T)=" << T.norm()
+               << " mincoeff(T)=" << minc
+               << " maxcoeff(T)=" << maxc
+               << std::endl;
+  if ( maxc > 1e-12 || minc < -1e-12 )
+    trace.error() << "ERROR: LapE != DivE o GradE" << std::endl;
+  trace.endBlock();
+
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Implementation of inline functions                                        //
+
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////

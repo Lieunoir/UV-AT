@@ -1,0 +1,806 @@
+/**
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as
+ *  published by the Free Software Foundation, either version 3 of the
+ *  License, or  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **/
+
+/**
+ * @file SurfaceMeshBuilder.ih
+ * @author Jacques-Olivier Lachaud (\c jacques-olivier.lachaud@univ-savoie.fr )
+ * Laboratory of Mathematics (CNRS, UMR 5127), University of Savoie, France
+ *
+ * @date 2020/02/18
+ *
+ * Implementation of inline methods defined in SurfaceMeshBuilder.h
+ *
+ * This file is part of the DGtal library.
+ */
+
+
+//////////////////////////////////////////////////////////////////////////////
+#include <cstdlib>
+#include <limits>
+//////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// IMPLEMENTATION of inline methods.
+///////////////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////////////
+// ----------------------- Standard services ------------------------------
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+SurfaceMeshBuilder()
+  : general_opt( "Allowed options are" ),
+    bimage( nullptr ),
+    shape ( nullptr ),
+    surface( nullptr ),
+    idx_surface( nullptr )
+{
+  // initializes some parameters
+  params = SH::defaultParameters() | SHG::defaultParameters();
+
+  // Create command line options
+  general_opt.add_options()
+    ( "help,h", "display this message" )
+    ( "withoutGUI", "run in headless mode" )
+    ( "input,i", po::value<std::string>(), "input file: may be a mesh (.OBJ) or a volume image (.vol)" )
+    ( "mesh", po::value<std::string>(), "input predefined mesh: {sphere[|-VN|-FN],r,m,n|lantern[|-VN|-FN],r,h,m,n|torus[-VN|-FN],R,r,m,n[,twist]}, where m/n is the number of latitudes/longitudes" )
+    ( "output,o", po::value<std::string>()->default_value( "output" ), "the basename for output obj files or <none> if no output obj is wanted." )
+    ( "average-normals,K", po::value<int>()->default_value( 0 ), "averages normals by performing <n> times vertexNormals -> faceNormals -> vertexNormals." )
+    ( "weights-normals-f2v", po::value<std::string>()->default_value( "EQUAL" ), "specifies how to average face normals when estimating vertex normals: EQUAL|MAX1995" )
+    ( "uniform-noise", po::value<double>()->default_value( 0.0 ), "perturbates positions with a uniform random noise as a ratio r of average edge length." )
+    ( "adaptive-noise", po::value<double>()->default_value( 0.0 ), "perturbates positions with a uniform random noise as a ratio r of local average edge length." );
+  general_opt.add_options()
+    ( "polynomial,p", po::value<std::string>(), "the implicit polynomial whose zero-level defines the shape of interest." )
+    ( "polynomial-list", "displays the list of predefined polynomials (names that you can use with '-p' options).");
+  general_opt.add_options()
+    ("minAABB,a",  po::value<Scalar>()->default_value( -10.0 ), "the min value of the AABB bounding box (domain)" )
+    ("maxAABB,A",  po::value<Scalar>()->default_value( 10.0 ), "the max value of the AABB bounding box (domain)" )
+    ("gridstep,g", po::value< Scalar >()->default_value( 1.0 ), "the gridstep that defines the digitization (often called h). " );
+  general_opt.add_options()
+    ("thresholdMin,m",  po::value<int>()->default_value(0), "threshold min (excluded) to define binary shape" )
+    ("thresholdMax,M",  po::value<int>()->default_value(255), "threshold max (included) to define binary shape" )
+    ("closed",  po::value<int>()->default_value(1), "tells if the cellular space is closed (1:default) or open." );
+  general_opt.add_options()
+    ("noise,N", po::value<Scalar>()->default_value( 0.0 ), "the Kanungo noise level l=arg, with l^d the probability that a point at distance d is flipped inside/outside." );
+  general_opt.add_options()
+    ("estimator,e", po::value<std::string>()->default_value( "True" ), "the chosen normal estimator: True | VCM | II | Trivial | CTrivial" )
+    ("R-radius,R", po::value<Scalar>()->default_value( 5 ), "the constant for parameter R in R(h)=R h^alpha (VCM)." )
+    ("r-radius,r", po::value<Scalar>()->default_value( 3 ), "the constant for parameter r in r(h)=r h^alpha (VCM,II,Trivial)." )
+    ("kernel,k", po::value<std::string>()->default_value( "hat" ), "the function chi_r, either hat or ball." )
+    ("alpha", po::value<Scalar>()->default_value( 0.5 ), "the parameter alpha in r(h)=r h^alpha (VCM)." )
+    ("trivial-ring,t", po::value<Scalar>()->default_value( 3 ), "the parameter t defining the radius for the convolved Trivial estimator. It corresponds to a discrete distance on the surface graph and is not related to the digitization gridstep.Used for reorienting normal directions." )
+    ("embedding,E", po::value<int>()->default_value( 0 ), "the surfel -> point embedding for VCM estimator: 0: Pointels, 1: InnerSpel, 2: OuterSpel." );
+  general_opt.add_options()
+    ("colormap", po::value<std::string>()->default_value( "Tics" ), "the chosen colormap for displaying values." )
+    ("zero", po::value<double>()->default_value( 0.0 ), "the value of reference, displayed in black." )
+    ("tics", po::value<double>()->default_value( 1.0 ), "the spacing between values with a basis at the reference value, displayed in grey." )
+    ("minValue", po::value<double>()->default_value( -0.3 ), "a specified min value associated with lowest color in colormap ." )
+    ("maxValue", po::value<double>()->default_value( 0.3 ), "a specified max value associated with highest color in colormap ." );
+  general_opt.add_options()
+    ( "zero-tic", po::value<double>()->default_value( 0.0 ), "adds a black band around zero of given thickness in colormaps." );
+  general_opt.add_options()
+    ( "digital-surface", po::value<std::string>()->default_value( "DUAL" ), "chooses which kind of digital surface is used for computations in DUAL|PRIMAL|PDUAL|PPRIMAL: DUAL dual marching-cubes surface, PRIMAL blocky quad primal surface, PDUAL same as DUAL but projected onto polynomial true surface (if possible), PPRIMAL same as PRIMAL but projected onto polynomial true surface (if possible).");
+  general_opt.add_options()
+    ( "subdivide", po::value<std::string>()->default_value( "NO" ), "forces the subdivision of the input into a triangulated mesh: NO means no subidivision, CANONIC makes an umbrella around first vertex of each face, CENTROID adds a vertex at the center of each non triangle face and connects it with triangles to the face boundary." )
+    ( "fix-normals", po::value<double>()->default_value( 0.01 ), "with value v, forces corrected normals u to have a positive dot product with naive normal n: u . n >= v" );
+} 
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+void
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+subdivideMesh( const std::vector< Vertices >& input_faces,
+               const RealPoints&              input_positions,
+               bool                           centroid_subdivision,
+               std::vector< Vertices >&       output_faces,
+               RealPoints&                    output_positions )
+{
+  output_faces.clear();
+  output_positions = input_positions;
+  for ( auto&& face : input_faces )
+    {
+      if ( face.size() <= 3 ) output_faces.push_back( face );
+      else if ( centroid_subdivision )
+        {
+          const Vertex     nv = output_positions.size();
+          const std::size_t n = face.size();
+          for ( std::size_t i = 0; i < n; ++i )
+            output_faces.push_back( { nv, face[ i ], face[ ( i+1 ) % n ] } ); 
+          RealPoint p;
+          for ( auto&& v : face ) p += input_positions[ v ];
+          output_positions.push_back( p / (Scalar) n );
+        }
+      else
+        {
+          const std::size_t n = face.size() - 1;
+          for ( std::size_t i = 1; i < n; ++i )
+            output_faces.push_back( { face[ 0 ], face[ i ], face[ i+1 ] } ); 
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+void
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+subdivideMeshWithVertexNormals
+( const std::vector< Vertices >& input_faces,
+  const RealPoints&              input_positions,
+  const RealVectors&             input_vnormals,
+  bool                           centroid_subdivision,
+  std::vector< Vertices > &      output_faces,
+  RealPoints&                    output_positions,
+  RealVectors&                   output_vnormals )
+{
+  output_faces.clear();
+  output_positions = input_positions;
+  output_vnormals  = input_vnormals;
+  for ( auto&& face : input_faces )
+    {
+      if ( face.size() <= 3 ) output_faces.push_back( face );
+      else if ( centroid_subdivision )
+        {
+          const Vertex     nv = output_positions.size();
+          const std::size_t n = face.size();
+          for ( std::size_t i = 0; i < n; ++i )
+            output_faces.push_back( { nv, face[ i ], face[ ( i+1 ) % n ] } ); 
+          RealPoint  p;
+          RealVector w;
+          for ( auto&& v : face )
+            {
+              p += input_positions[ v ];
+              w += input_vnormals [ v ];
+            }
+          output_positions.push_back( p / (Scalar) n );
+          output_vnormals .push_back( w.getNormalized() ); // ( w / (Scalar) n );
+        }
+      else
+        {
+          const std::size_t n = face.size() - 1;
+          for ( std::size_t i = 1; i < n; ++i )
+            output_faces.push_back( { face[ 0 ], face[ i ], face[ i+1 ] } ); 
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+void
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+subdivideMeshWithFaceNormals
+( const std::vector< Vertices >& input_faces,
+  const RealPoints&              input_positions,
+  const RealVectors&             input_fnormals,
+  bool                           centroid_subdivision,
+  std::vector< Vertices > &      output_faces,
+  RealPoints&                    output_positions,
+  RealVectors&                   output_fnormals )
+{
+  output_faces   .clear();
+  output_fnormals.clear();
+  output_positions = input_positions;
+  Face idxf        = 0;
+  for ( auto&& face : input_faces )
+    {
+      const RealVector fn = input_fnormals[ idxf++ ];
+      if ( face.size() <= 3 )
+        {
+          output_faces.push_back( face );
+          output_fnormals.push_back( fn );
+        }
+      else if ( centroid_subdivision )
+        {
+          const Vertex     nv = output_positions.size();
+          const std::size_t n = face.size();
+          for ( std::size_t i = 0; i < n; ++i )
+            {
+              output_faces.push_back( { nv, face[ i ], face[ ( i+1 ) % n ] } );
+              output_fnormals.push_back( fn );
+            }
+          RealPoint  p;
+          for ( auto&& v : face ) p += input_positions[ v ];
+          output_positions.push_back( p / (Scalar) n );
+        }
+      else
+        {
+          const std::size_t n = face.size() - 1;
+          for ( std::size_t i = 1; i < n; ++i )
+            {
+              output_faces.push_back( { face[ 0 ], face[ i ], face[ i+1 ] } ); 
+              output_fnormals.push_back( fn );
+            }
+        }
+    }
+}
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+bool
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+args2vm( const po::options_description& opts,
+         int argc, char** argv,
+         po::variables_map& vm )
+{
+  bool parseOK = true;
+  try
+    {
+      po::store( po::parse_command_line( argc, argv, opts ), vm );
+    }
+  catch( const std::exception & ex )
+    {
+      parseOK = false;
+      trace.error() << "[SurfaceMeshBuilder::args2vm]"
+                    << " Error checking program options: " << ex.what() << std::endl;
+    }
+  return parseOK;
+}
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+bool
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+parseCommandLine( int argc, char** argv )
+{
+  in_obj        = false;
+  in_vol        = false;
+  in_mesh       = false;
+  in_polynomial = false;
+
+  bool parseOK = args2vm( general_opt, argc, argv, vm );
+  bool neededArgsGiven=true;
+
+  if ( vm.count( "polynomial-list" ) )
+    {
+      trace.info() << "List of predefined polynomials:" << std::endl;
+      auto L = SH::getPolynomialList();
+      for ( auto p : L ) {
+	trace.info() << "  " << p.first << " -> " << p.second << std::endl;
+      }
+      return false;
+    }
+
+  auto mesh     = vm.count( "mesh"  ) ? vm[ "mesh"  ].template as<std::string>() : "";
+  filename      = vm.count( "input" ) ? vm[ "input" ].template as<std::string>() : "";
+  auto idx      = filename.rfind('.');
+  std::string extension = (idx != std::string::npos) ? filename.substr(idx+1) : "";
+  trace.info() << "filename=" << filename << " extension=" << extension << std::endl;
+  if ( parseOK && ( ! vm.count("polynomial") ) && ( ! vm.count( "input" ) )
+       && ( ! vm.count( "mesh" ) ) ) {
+    missingParam("--polynomial or --input or --mesh");
+    neededArgsGiven = false;
+  }
+  if ( vm.count( "input" ) && ( extension != "vol" )
+       && ( extension != "obj" ) && ( extension != "OBJ" ) ) {
+    missingParam("Wrong input file extension (should be .vol, .obj, .OBJ)");
+    neededArgsGiven = false;
+  }
+
+  meshargs = SMeshReader::split( mesh, ',' );
+  meshname = mesh != "" ? meshargs[ 0 ] : "";
+  if ( meshname != ""
+       && meshname != "sphere" && meshname != "sphere-VN" && meshname != "sphere-FN"
+       && meshname != "lantern" && meshname != "lantern-VN" && meshname != "lantern-FN"
+       && meshname != "torus" && meshname != "torus-VN" && meshname != "torus-FN" )
+    {
+      missingParam("Wrong predefined mesh (should be {sphere[|-VN|-FN]|lantern[|-VN|-FN]|torus[-VN|-FN])");
+      neededArgsGiven = false;
+    }
+  
+  if ( !neededArgsGiven || !parseOK || vm.count("help") || argc <= 1 )
+    {
+      trace.info()<< "Builds a mesh shape from varied inputs" <<std::endl
+                  << general_opt << "\n"
+                  << "Basic usage: "<<std::endl
+		  << "\t " << argv[ 0 ] << " -i mesh.obj" << std::endl
+		  << "\t " << argv[ 0 ] << " -i image.vol" << std::endl
+		  << "\t " << argv[ 0 ] << " --mesh sphere,2.5,5,8" << std::endl
+		  << "\t " << argv[ 0 ] << " -p goursat" << std::endl
+		  << "\t " << argv[ 0 ] << " -p \"5*x^2-3*x*y*z+2*y^2-z^2-4*x*y^2\""
+		  << std::endl << std::endl;
+      return false;
+    }
+  
+  command_line = std::string( argv[ 0 ] );
+  for ( int i = 1; i < argc; ++i )
+    command_line += std::string( " " ) + std::string( argv[ i ] );
+  
+  /////////////////////////////////////////////////////////////////////////////
+  // Checking quantities
+  /////////////////////////////////////////////////////////////////////////////
+  h          = vm[ "gridstep" ].template as<double>();
+
+  int i = 0;
+  if ( mesh != "" )
+    in_mesh = true, i++;
+  if ( vm.count("polynomial") )
+    in_polynomial = true, i++;
+  if ( vm.count("input") && ( extension == "vol" ) )
+    in_vol = true, i++;
+  if ( vm.count("input") && ( ( extension == "obj" ) || ( extension == "OBJ" ) ) )
+    in_obj = true, i++;
+  if ( i != 1 )
+    {
+      trace.error() << "Only one input at the same time is possible:"
+                    << " either --mesh, --input or --polynomial." << std::endl;
+      return false;
+    }
+  fix_normals_val = vm[ "fix-normals" ].template as< double >();
+  return true;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+/// Build input from data for further processing.
+/////////////////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+bool
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+buildInput()
+{
+  bool build_ok = false;
+  if ( in_vol || in_polynomial ) build_ok = buildPolynomialOrVolInput();
+  if ( in_mesh )                 build_ok = buildPredefinedMesh();
+  if ( in_obj )                  build_ok = buildObjInput();
+  return build_ok;
+}
+
+/////////////////////////////////////////////////////////////////////////////
+/// Taking care of vol image file or implicit polynomial
+/////////////////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+bool
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+buildPolynomialOrVolInput()
+{
+  trace.beginBlock( "Make Shape from vol file or implicit polynomial" );
+  // Generic parameters.
+  const auto estimator = vm[ "estimator" ].template as<std::string>();
+  params( "gridstep",          h ); // gridstep
+  params( "noise",             vm[ "noise"    ].template as<double>() );
+  params( "surfelAdjacency",          0 ); // 0:interior
+  params( "nbTriesToFindABel",   100000 ); // number of tries in method Surfaces::findABel
+  params( "surfaceComponents", "AnyBig" ); // "AnyBig"|"All"
+  params( "projectionMaxIter",       20 ); // the maximum number of iter for the projection.
+  params( "projectionAccuracy",  0.0001 ); // zero-proximity stop crit. during projection.
+  params( "projectionGamma",        0.5 ); // the displacement coef. of the projection.
+  params( "verbose",                  1 );
+  params( "t-ring",            vm[ "trivial-ring" ].template as<double>() );
+  params( "kernel",            vm[ "kernel"       ].template as<std::string>() );
+  params( "R-radius",          vm[ "R-radius"     ].template as<double>() );
+  params( "r-radius",          vm[ "r-radius"     ].template as<double>() );
+  params( "alpha",             vm[ "alpha"        ].template as<double>() );
+  params( "surfelEmbedding",   vm[ "embedding"    ].template as<int>()    );
+  trace.info() << params << std::endl;
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Case where input is polynomial.
+  /////////////////////////////////////////////////////////////////////////////
+  if ( in_polynomial )
+    {
+      // Fill useful parameters
+      params( "polynomial", vm[ "polynomial" ].template as<std::string>() );
+      params( "minAABB",    vm[ "minAABB"    ].template as<double>() );
+      params( "maxAABB",    vm[ "maxAABB"    ].template as<double>() );
+      params( "offset",     5.0 );
+      shape        = SH::makeImplicitShape3D( params );
+      K            = SH::getKSpace( params );
+      auto dshape  = SH::makeDigitizedImplicitShape3D( shape, params );
+      bimage       = SH::makeBinaryImage( dshape, params );
+      if ( bimage == nullptr ) in_polynomial = false; // failure
+    }
+  
+  /////////////////////////////////////////////////////////////////////////////
+  // Case where input is a 3D image vol file.
+  /////////////////////////////////////////////////////////////////////////////
+  else if ( in_vol )
+    {
+      // Fill useful parameters
+      params( "thresholdMin", vm[ "thresholdMin" ].template as<int>() );
+      params( "thresholdMax", vm[ "thresholdMax" ].template as<int>() );
+      params( "closed",       vm[ "closed" ].template as<int>() );
+      bimage       = SH::makeBinaryImage( filename, params );
+      K            = SH::getKSpace( bimage, params );
+      if ( bimage == nullptr ) in_vol = false; // failure
+    }
+  auto size    = K.upperBound() - K.lowerBound();
+  trace.info() << "- Domain size is " << ( size[ 0 ] + 1 )
+  	       << " x " << ( size[ 1 ] + 1 )
+  	       << " x " << ( size[ 2 ] + 1 ) << std::endl;
+
+  if ( bimage != nullptr )
+    {
+      unsigned int                nb = 0;
+      std::for_each( bimage->cbegin(), bimage->cend(),
+		     [&nb] ( bool v ) { nb += v ? 1 : 0; } );
+      trace.info() << "- digital shape has " << nb << " voxels." << std::endl;
+    }
+  auto sembedder   = SH::getSCellEmbedder( K );
+  auto embedder    = SH::getCellEmbedder( K );
+  if ( bimage != nullptr )  surface     = SH::makeDigitalSurface( bimage, K, params );
+  if ( surface != nullptr ) idx_surface = SH::makeIdxDigitalSurface( surface );
+  if ( bimage != nullptr && surface == nullptr ) {
+    trace.error() << "- surface is empty (either empty or full volume). ";
+    trace.info()  << std::endl;
+    trace.endBlock();
+    return false;
+  }
+  else if ( surface != nullptr )
+    trace.info() << "- surface has " << surface->size()<< " surfels." << std::endl;
+  trace.endBlock();
+
+  trace.beginBlock( "Compute surfels" );
+  params( "surfaceTraversal", "Default" );
+  const auto     surfels = ( surface != nullptr )
+    ? SH::getSurfelRange( surface, params )
+    : SH::SurfelRange();
+  trace.endBlock();
+  /////////////////////////////////////////////////////////////////////////////
+  // Compute primal/dual surfaces
+  /////////////////////////////////////////////////////////////////////////////
+  trace.beginBlock( "Compute primal/dual surface" );
+  auto digital_surface_mode = vm[ "digital-surface" ].template as<std::string>();
+  blocky = digital_surface_mode == "PRIMAL" || digital_surface_mode == "DUAL"
+    || ! in_polynomial;
+  dual   = digital_surface_mode == "DUAL" || digital_surface_mode == "PDUAL";
+  SH::RealPoints          pos_surf; 
+  SH::RealPoints          ppos_surf;
+  SH::RealPoints          vertices;
+  SH::RealVectors         normals;
+  std::vector< Vertices > faces;
+  SH::Cell2Index          c2i;
+  if ( ! surfels.empty() )
+    { // Getting vertices positions.
+      trace.info() << "computing vertices" << std::endl;
+      if ( dual )
+	{ // dual surface
+	  pos_surf = SH::RealPoints( surfels.size() );
+	  std::transform( surfels.cbegin(), surfels.cend(), pos_surf.begin(),
+			  [&] (const SH::SCell& c) { return h * sembedder( c ); } );
+	}
+      else
+	{ // primal surface
+ 	  auto pointels = SH::getPointelRange( c2i, surface );
+	  pos_surf = SH::RealPoints( pointels.size() );
+	  std::transform( pointels.cbegin(), pointels.cend(), pos_surf.begin(),
+			  [&] (const SH::Cell& c) { return h * embedder( c ); } ); 
+	}
+      // project onto true surface if asked.
+      trace.info() << "projecting vertices" << std::endl;
+      if ( ! blocky ) ppos_surf = SHG::getPositions( shape, pos_surf, params );
+      vertices = blocky ? pos_surf : ppos_surf;
+      // Build faces
+      trace.info() << "build faces" << std::endl;
+      if ( dual )
+        { // dual surface
+	  for ( Index f = 0; f < idx_surface->nbFaces(); ++f )
+	    {
+	      const auto dual_vtcs = idx_surface->verticesAroundFace( f );
+	      std::vector< Index > dual_rvtcs( dual_vtcs.rbegin(), dual_vtcs.rend() );
+	      faces.push_back( dual_rvtcs );
+	    }
+	}
+      else
+        { // primal surface	  
+          for ( auto&& surfel : *surface )
+            {
+              const auto primal_surfel_vtcs = SH::getPointelRange( K, surfel );
+	      std::vector< Index > face;	      
+	      for ( auto&& primal_vtx : primal_surfel_vtcs )
+		face.push_back( c2i[ primal_vtx ] );
+	      faces.push_back( face );
+	    }
+	}
+    }
+  trace.endBlock();
+
+  /////////////////////////////////////////////////////////////////////////////
+  // Compute true and/or estimated normal vectors
+  /////////////////////////////////////////////////////////////////////////////
+  if ( in_polynomial )
+    {
+      trace.beginBlock( "Compute true normals" );
+      expected_normals = SHG::getNormalVectors( shape, K, surfels, params );
+      trace.endBlock();
+    }
+  if ( in_polynomial || in_vol )
+    {
+      trace.beginBlock( "Estimate normals" );
+      if ( estimator == "True" && in_polynomial )
+	measured_normals = expected_normals;
+      else if ( estimator == "CTrivial" )
+	measured_normals = SHG::getCTrivialNormalVectors( surface, surfels, params );
+      else if ( estimator == "VCM" )
+	measured_normals = SHG::getVCMNormalVectors( surface, surfels, params );
+      else if ( estimator == "II" ) {
+	measured_normals = SHG::getIINormalVectors( bimage, surfels, params );
+	auto oriented_n = SHG::getCTrivialNormalVectors( surface, surfels, params );
+	SHG::orientVectors( measured_normals, oriented_n );
+      }
+      else if ( estimator == "Trivial" ) 
+	measured_normals = SHG::getTrivialNormalVectors( K, surfels );
+      // else "Geometric" normals.
+      trace.endBlock();
+    }
+  // Subdivide mesh if asked for.
+  std::string subdivide = vm[ "subdivide" ].template as < std::string >();
+  if ( subdivide != "NO" )
+    {
+      trace.beginBlock( "Subdivide mesh" );
+      SH::RealPoints          nvertices;
+      SH::RealVectors         nnormals;
+      std::vector< Vertices > nfaces;
+      bool centroid = ( subdivide == "CENTROID" );
+      if ( ! measured_normals.empty() )
+        {
+          if ( dual )
+            subdivideMeshWithVertexNormals( faces, vertices, measured_normals,
+                                            centroid, nfaces, nvertices, nnormals );
+          else
+            subdivideMeshWithFaceNormals( faces, vertices, measured_normals,
+                                          centroid, nfaces, nvertices, nnormals );
+        }
+      else
+        subdivideMesh( faces, vertices, centroid, nfaces, nvertices );
+      vertices        .swap( nvertices );
+      faces           .swap( nfaces );
+      measured_normals.swap( nnormals );
+      trace.endBlock();
+    }
+  // We build a mesh
+  trace.beginBlock( "Build mesh from primal/dual surface" );
+  smesh.init( vertices.cbegin(), vertices.cend(),
+	      faces.cbegin(),    faces.cend() );
+  if ( ! measured_normals.empty() ) {
+    if ( dual )
+      smesh.setVertexNormals( measured_normals.cbegin(), measured_normals.cend() );
+    else
+      smesh.setFaceNormals( measured_normals.cbegin(), measured_normals.cend() );
+  }
+  trace.info() << smesh << std::endl;
+  trace.endBlock();
+
+  return in_polynomial || in_vol;
+}
+
+
+/////////////////////////////////////////////////////////////////////////////
+/// Taking care of predefined parametric meshes
+/////////////////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+bool
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+buildPredefinedMesh()
+{
+  ASSERT( in_mesh );
+  trace.beginBlock( "Build predefined parametric mesh" );
+  if ( meshargs.size() >= 4
+       && ( meshname == "sphere" || meshname == "sphere-VN"
+	    || meshname == "sphere-FN" ) )
+    {
+      const double r = std::stof( meshargs[1] );
+      const Index  m = std::stoi( meshargs[2] );
+      const Index  n = std::stoi( meshargs[3] );
+      const auto normals =
+        ( meshname == "sphere-VN" ) ? SMeshHelper::NormalsType::VERTEX_NORMALS :
+        ( meshname == "sphere-FN" ) ? SMeshHelper::NormalsType::FACE_NORMALS :
+        SMeshHelper::NormalsType::NO_NORMALS;
+      smesh = SMeshHelper
+        ::makeSphere( r, RealPoint(), m, n, normals );
+      sub_m = m;
+      sub_n = n;
+    }
+  else if ( meshargs.size() >= 5 
+	    && ( meshname == "lantern" || meshname == "lantern-VN"
+		 || meshname == "lantern-FN" ) )
+    {
+      const double r = std::stof( meshargs[1] );
+      const double h = std::stof( meshargs[2] );
+      const Index  m = std::stoi( meshargs[3] );
+      const Index  n = std::stoi( meshargs[4] );
+      const auto normals =
+        ( meshname == "lantern-VN" ) ? SMeshHelper::NormalsType::VERTEX_NORMALS :
+        ( meshname == "lantern-FN" ) ? SMeshHelper::NormalsType::FACE_NORMALS :
+        SMeshHelper::NormalsType::NO_NORMALS;
+      smesh = SMeshHelper
+        ::makeLantern( r, h, RealPoint(), m, n, normals );
+      sub_m = m;
+      sub_n = n;
+    }
+  else if ( meshargs.size() >= 5 
+	    && ( meshname == "torus" || meshname == "torus-VN"
+		 || meshname == "torus-FN" ) )
+    {
+      const double R = std::stof( meshargs[1] );
+      const double r = std::stof( meshargs[2] );
+      const Index  m = std::stoi( meshargs[3] );
+      const Index  n = std::stoi( meshargs[4] );
+      const int twist= std::stoi( meshargs.size() >= 6 ? meshargs[5] : "0" );
+      const auto normals =
+        ( meshname == "torus-VN" ) ? SMeshHelper::NormalsType::VERTEX_NORMALS :
+        ( meshname == "torus-FN" ) ? SMeshHelper::NormalsType::FACE_NORMALS :
+        SMeshHelper::NormalsType::NO_NORMALS;
+      smesh = SMeshHelper
+        ::makeTorus( R, r, RealPoint(), m, n, twist, normals );
+      sub_m = m;
+      sub_n = n;
+    }
+  else
+    in_mesh = false;
+  trace.endBlock();
+
+  // Subdivide mesh if asked for.
+  std::string subdivide = vm[ "subdivide" ].template as < std::string >();
+  if ( in_mesh ) subdivideCurrentMesh( subdivide );
+  return in_mesh;
+}
+
+/////////////////////////////////////////////////////////////////////////////
+/// Taking care of OBJ input files
+/////////////////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+bool
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+buildObjInput()
+{
+  ASSERT( in_obj );
+  // Case where input is a mesh obj file.
+  trace.beginBlock( "Reading input obj mesh file" );
+  trace.info() << "Reading file <" << filename << ">" << std::endl;
+  std::ifstream mesh_input( filename.c_str() );
+  bool  ok = SMeshReader::readOBJ( mesh_input, smesh );
+  trace.endBlock();
+  if ( ! ok ) {
+    trace.error() << "Error reading file <" << filename << ">" << std::endl;
+    in_obj = false;
+  }
+  // Subdivide mesh if asked for.
+  std::string subdivide = vm[ "subdivide" ].template as < std::string >();
+  if ( in_obj ) subdivideCurrentMesh( subdivide );
+  return in_obj;
+}
+
+
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+void
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+subdivideCurrentMesh( std::string subdivide )
+{
+  bool has_vertex_normal = ! smesh.vertexNormals().empty();
+  bool has_face_normal   = ! smesh.faceNormals().empty();
+  // Subdivide mesh if asked for.
+  if ( subdivide != "NO" )
+    {
+      trace.beginBlock( "Subdivide mesh" );
+      SH::RealPoints          vertices = smesh.positions();
+      std::vector< Vertices > faces    = smesh.allIncidentVertices();
+      SH::RealPoints          nvertices;
+      SH::RealVectors         nnormals;
+      std::vector< Vertices > nfaces;
+      bool centroid = ( subdivide == "CENTROID" );
+      if ( has_vertex_normal )
+        subdivideMeshWithVertexNormals( faces, vertices, smesh.vertexNormals(),
+                                        centroid, nfaces, nvertices, nnormals );
+      else if ( has_face_normal )
+        subdivideMeshWithFaceNormals( faces, vertices, smesh.faceNormals(),
+                                      centroid, nfaces, nvertices, nnormals );
+      else
+        subdivideMesh( faces, vertices, centroid, nfaces, nvertices );
+      smesh.clear();
+      smesh.init( nvertices.cbegin(), nvertices.cend(),
+                  nfaces.cbegin(),    nfaces.cend() );
+      if ( nnormals.size() == smesh.nbVertices() )
+        smesh.setVertexNormals( nnormals.cbegin(), nnormals.cend() );
+      else if ( nnormals.size() == smesh.nbFaces() )
+        smesh.setFaceNormals( nnormals.cbegin(), nnormals.cend() );
+      trace.info() << smesh << std::endl;
+      trace.endBlock();
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////
+/// Compute normals
+/////////////////////////////////////////////////////////////////////////////
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+void
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+computeNormals()
+{
+  trace.beginBlock( "Compute normals if necessary" );
+  auto weights_normals_f2v = vm[ "weights-normals-f2v" ].template as<std::string>();
+  if ( smesh.faceNormals().empty() && smesh.vertexNormals().empty() )
+    {
+      smesh.computeFaceNormalsFromPositions();
+      if ( weights_normals_f2v == "MAX1995" )
+        smesh.computeVertexNormalsFromFaceNormalsWithMaxWeights();
+      else
+        smesh.computeVertexNormalsFromFaceNormals();
+    }
+  else if ( smesh.faceNormals().empty() )
+    smesh.computeFaceNormalsFromVertexNormals();
+  else if ( smesh.vertexNormals().empty() )
+    {
+      if ( weights_normals_f2v == "MAX1995" )
+        smesh.computeVertexNormalsFromFaceNormalsWithMaxWeights();
+      else
+        smesh.computeVertexNormalsFromFaceNormals();
+    }
+  auto nb_avg_normals = vm[ "average-normals"   ].template as<int>();
+  for ( int i = 0; i < nb_avg_normals; i++ )
+    {
+      trace.info() << "face normals -> vertex normals" << std::endl;
+      smesh.computeFaceNormalsFromVertexNormals();
+      trace.info() << "vertex normals -> face normals" << std::endl;
+      if ( weights_normals_f2v == "MAX1995" )
+        smesh.computeVertexNormalsFromFaceNormalsWithMaxWeights();
+      else
+        smesh.computeVertexNormalsFromFaceNormals();
+    }
+  trace.info() << smesh << std::endl;
+  trace.endBlock();
+}
+//-----------------------------------------------------------------------------
+template <typename TRealPoint, typename TRealVector>
+void
+DGtal::SurfaceMeshBuilder<TRealPoint, TRealVector>::
+fixVertexNormals()
+{
+  trace.beginBlock( "Fix vertex normals" );
+  const double val     = fix_normals_val;
+  RealVectors vertex_u = smesh.vertexNormals();
+  RealVectors   face_n = smesh.faceNormals();
+  smesh.computeFaceNormalsFromPositions();
+  RealVectors  naive_n = smesh.faceNormals();
+  Size        nb_fixed = 0;
+  Size      nb_v_fixed = 0;
+  for ( Vertex v = 0; v < smesh.nbVertices(); ++v )
+    {
+      bool      ok = false;
+      bool v_fixed = false;
+      int       nb = 100;
+      while ( ! ok && ( --nb > 0 ) )
+        {
+          ok = true;
+          for ( auto&& f : smesh.incidentFaces( v ) )
+            {
+              if ( vertex_u[ v ].dot( naive_n[ f ] ) < val )
+                {
+                  vertex_u[ v ]  = 0.99 * vertex_u[ v ] + 0.01 * naive_n[ f ];
+                  vertex_u[ v ] /= vertex_u[ v ].norm();
+                  nb_fixed      += 1;
+                  ok             = false;
+                  v_fixed        = true;
+                }
+            }
+        }
+      if ( v_fixed ) nb_v_fixed += 1;
+    }
+  trace.info() << "nb vertex fixed = " << nb_v_fixed
+               << " (total " << nb_fixed << " corrections)" << std::endl;
+  smesh.vertexNormals() = vertex_u;
+  smesh.faceNormals()   = face_n;
+  trace.endBlock();
+}  
+
+
+///////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
