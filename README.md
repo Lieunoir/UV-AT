@@ -34,3 +34,5 @@ You can use the button `Compute initial AT-UV` to compute the initial parameteri
 When a cut is done, we can either use `Refine AT-UV` to run the method again from the result and obtain a new compute uv and v, or `Finalize AT-UV` to get a final result (force v at 1).
 
 `Compute whole` is a shortcut for initialization, running our method once, cutting and finalizing.
+
+The option `--withoutGUI` can also be used to run the method in headless mode, and put the results in an `output` directory. Use `./batch.sh ./path/to/obj/folder` can be used to run the method over all the obj files contained in a mesh. `./generate_tex.sh` can then be used to generate a tex file containing the results.

@@ -83,7 +83,7 @@ void registerCornerParam(Eigen::MatrixXd& X, std::string const paramName) {
     for(auto i=0; i < dec.nbCorners(); ++i)
         init_uv_GC[i] = {X(i,0), X(i,1)};
     polyscope::getSurfaceMesh("input mesh")
-        ->addParameterizationQuantity(paramName, init_uv_GC);
+        ->addParameterizationQuantity(paramName, init_uv_GC)->setEnabled(true);
     Eigen::MatrixXd Xproxy = Eigen::MatrixXd::Zero(X.rows(), 3);
     Xproxy.col(0) = X.col(0);
     Xproxy.col(1) = X.col(1);
@@ -110,7 +110,7 @@ void registerLoadedCut(Eigen::MatrixXi cut_mask) {
             }
         }
     }
-    psMesh->addSurfaceGraphQuantity("Loaded cut", positions, edgeInds);
+    psMesh->addSurfaceGraphQuantity("Loaded cut", positions, edgeInds)->setColor(glm::vec3(0., 0., 0.))->setEnabled(true);
 }
 
 void registerNewCut(Eigen::MatrixXi cut_mask) {
@@ -126,7 +126,7 @@ void registerNewCut(Eigen::MatrixXi cut_mask) {
             }
         }
     }
-    psMesh->addSurfaceGraphQuantity("New cut", positions, edgeInds);
+    psMesh->addSurfaceGraphQuantity("New cut", positions, edgeInds)->setColor(glm::vec3(0., 0., 0.))->setEnabled(true);
 }
 
 Eigen::MatrixXi cut_history;
@@ -362,14 +362,6 @@ void myCallback()
                 registerCornerParam(Xc, "Param with AT");
             }
         }
-        if(ImGui::Button("Compute UV param")) {
-            fUVAT.build( Epsilon1, Lambda, V, F, bijective, use_ao, use_bb, bb_x, bb_y, bb_coeff );
-            fUVAT.finalStep();
-            double border_energy = get_border_energy(F, V, fUVAT.F, fUVAT.V.rows());
-
-            Eigen::MatrixXd Xc = fUVAT.UVSolver.getCornerParam();
-            registerCornerParam(Xc, "Param with AT");
-        }
         if(faceATUVon)
             doFacesATUV();
         ImGui::EndTabItem();
@@ -418,7 +410,7 @@ double get_border_energy(Eigen::MatrixXi const&F_orig, Eigen::MatrixXd const&V, 
     return 0.5*(l_new - l_orig) / sqrt(totArea / 3.14159265359);
 }
 
-void loadUV(char **argv) {
+void loadUV(char **argv, std::string outputPath, bool headless) {
     std::vector<double> us;
     std::vector<double> vs;
     Eigen::MatrixXi F2 = Eigen::MatrixXi(F.rows(), 3);
@@ -471,7 +463,7 @@ void loadUV(char **argv) {
             Xcorner.row(3*j+2) = X.row(F2(j,2));
         }
         polyscope::getSurfaceMesh("input mesh")
-            ->addParameterizationQuantity("Loaded param", Xcorner);
+            ->addParameterizationQuantity("Loaded param", Xcorner)->setEnabled(true);
         polyscope::registerSurfaceMesh("Loaded UV corner mesh", X2, F2)->setEdgeWidth(1.0)->setEdgeColor({0.,0.,0.});
         Eigen::MatrixXi cut_mask = Eigen::MatrixXi::Zero(F.rows(), 3);
         Eigen::MatrixXi TT;
@@ -487,11 +479,32 @@ void loadUV(char **argv) {
             }
         }
         registerLoadedCut(cut_mask);
-        std::cout << "Loaded cut length : " << get_border_energy(F, V, F2, i) << std::endl;
+        if(headless) {
+            polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::None;
+            polyscope::getSurfaceMesh("input mesh")->setEnabled(true);
+            polyscope::getSurfaceMesh("Loaded UV corner mesh")->setEnabled(false);
+            polyscope::getSurfaceMesh("input mesh")->rescaleToUnit();
+            polyscope::getSurfaceMesh("Loaded UV corner mesh")->rescaleToUnit();
+            polyscope::getSurfaceMesh("input mesh")->centerBoundingBox();
+            polyscope::getSurfaceMesh("Loaded UV corner mesh")->centerBoundingBox();
+            polyscope::view::resetCameraToHomeView();
+            polyscope::screenshot(outputPath + "/loaded_mesh.jpg");
+            polyscope::view::style = polyscope::view::NavigateStyle::Planar;
+            polyscope::getSurfaceMesh("input mesh")->setEnabled(false);
+            polyscope::getSurfaceMesh("Loaded UV corner mesh")->setEnabled(true);
+            polyscope::view::resetCameraToHomeView();
+            polyscope::screenshot(outputPath + "/loaded_param.jpg");
+            polyscope::view::style = polyscope::view::NavigateStyle::Free;
+            std::cout << "Loaded cut length : " << get_border_energy(F, V, F2, i) << std::endl;
+            polyscope::removeSurfaceMesh("Loaded UV corner mesh");
+            //hack to remove surface graph quickly
+            Eigen::MatrixXi cut_mask = Eigen::MatrixXi::Zero(F.rows(), 3);
+            registerLoadedCut(cut_mask);
+        }
     }
 }
 
-void headless_compute(std::ofstream &ofs) {
+void headless_compute(std::ofstream &ofs, std::string outputPath) {
     bool start = true;
     Clock c;
     long duration;
@@ -508,6 +521,21 @@ void headless_compute(std::ofstream &ofs) {
                 registerCornerParam(Xc, "Param with AT");
                 wholeATUVon = false;
                 DGtal::trace.endBlock();
+                polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::None;
+                polyscope::getSurfaceMesh("input mesh")->setEnabled(true);
+                polyscope::getSurfaceMesh("UV corner mesh")->setEnabled(false);
+                polyscope::getSurfaceMesh("input mesh")->rescaleToUnit();
+                polyscope::getSurfaceMesh("UV corner mesh")->rescaleToUnit();
+                polyscope::getSurfaceMesh("input mesh")->centerBoundingBox();
+                polyscope::getSurfaceMesh("UV corner mesh")->centerBoundingBox();
+                polyscope::view::resetCameraToHomeView();
+                polyscope::screenshot(outputPath + "/mesh.jpg");
+                polyscope::view::style = polyscope::view::NavigateStyle::Planar;
+                polyscope::getSurfaceMesh("input mesh")->setEnabled(false);
+                polyscope::getSurfaceMesh("UV corner mesh")->setEnabled(true);
+                polyscope::view::resetCameraToHomeView();
+                polyscope::screenshot(outputPath + "/param.jpg");
+                polyscope::view::style = polyscope::view::NavigateStyle::Free;
                 return;
             } else {
                 DGtal::trace.beginBlock("Computing parameterization");
@@ -547,15 +575,21 @@ int main(int argc, char **argv)
     builder.buildInput();
     builder.computeNormals();
     builder.fixVertexNormals();
+    surfmesh = builder.smesh;
 
-    std::string meshname = std::filesystem::path(builder.filename).stem();
-    mkdir("output", 0777);
-    mkdir(("output/" + meshname).c_str(), 0777);
-    std::ofstream ofs ("output/" + meshname + "/results-uv-at.dat", std::ofstream::out);
+    std::string meshname;
+    std::ofstream ofs;
+    if(withoutGUI)
+    {
+        polyscope::options::screenshotExtension = ".jpg";
+        meshname = std::filesystem::path(builder.filename).stem();
+        mkdir("output", 0777);
+        mkdir(("output/" + meshname).c_str(), 0777);
+        ofs = std::ofstream ("output/" + meshname + "/results-uv-at.dat", std::ofstream::out);
+        ofs << surfmesh.nbVertices() << ", " << surfmesh.nbFaces() << std::endl;
+    }
 
     // Initializing corrected DEC
-    surfmesh = builder.smesh;
-    ofs << surfmesh.nbVertices() << ", " << surfmesh.nbFaces() << std::endl;
     dec.init( &surfmesh );
     dec.requireDiscreteExteriorCalculus();
 
@@ -589,14 +623,14 @@ int main(int argc, char **argv)
 
     trace.info() << "showcase!" << std::endl;
 
-    loadUV(argv);
+    loadUV(argv, "output/" + meshname, withoutGUI);
 
     cut_history = Eigen::MatrixXi::Zero(F.rows(), 3);
 
     if(!withoutGUI) {
         polyscope::show();
     } else {
-        headless_compute(ofs);
+        headless_compute(ofs, "output/" + meshname);
     }
     return 0;
 }
