@@ -43,7 +43,7 @@ if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang" OR "${CMAKE_CXX_COMPILER_ID}" STR
   endif()
 
   SET(CMAKE_CXX_FLAGS "${BASE_CXX_FLAGS} ${DISABLED_WARNINGS}")
-  SET(CMAKE_CXX_FLAGS_RELEASE        "-O3 -march=native -DNDEBUG")
+  SET(CMAKE_CXX_FLAGS_RELEASE        "-O3  -DNDEBUG")
 
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   # using Visual Studio C++
@@ -69,7 +69,6 @@ endif()
 # == Deps
 add_subdirectory(deps/geometry-central)
 add_subdirectory(deps/polyscope)
-set(LIBIGL_RESTRICTED_TRIANGLE ON)
 add_subdirectory(deps/libigl)
 SET(BUILD_EXAMPLES OFF CACHE BOOL "DGtal examples")
 add_subdirectory(deps/DGtal)
