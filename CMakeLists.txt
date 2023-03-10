@@ -91,7 +91,7 @@ add_executable(at-uv "src/at-uv.cpp" ${SRCFILES})
 target_include_directories(at-uv PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/")
 target_include_directories(at-uv PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/")
 target_sources(at-uv PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/UV.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/AT.cpp")
-target_link_libraries(at-uv geometry-central polyscope DGtal ${DGTAL_LIBRARIES}   ${Boost_PROGRAM_OPTIONS_LIBRARY} Boost::program_options igl::core stdc++fs)
+target_link_libraries(at-uv geometry-central polyscope DGtal ${DGTAL_LIBRARIES}   ${Boost_PROGRAM_OPTIONS_LIBRARY} Boost::program_options igl::core)
 
 
 # To mark ".ih" as _headers in Xcode

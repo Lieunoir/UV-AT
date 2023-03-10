@@ -8,7 +8,7 @@
 #include <igl/avg_edge_length.h>
 #include <igl/ambient_occlusion.h>
 #include <igl/facet_components.h>
-#include <igl/triangle/scaf.h>
+//#include <igl/triangle/scaf.h>
 #include <igl/MappingEnergyType.h>
 #include <igl/is_border_vertex.h>
 
@@ -75,7 +75,7 @@ struct FaceUVAT {
         int truc[59] = {3546, 3527, 3524, 3526, 3567, 3554, 3552,
             3272, 3275, 3306, 3298, 3296, 3299, 3303, 3574, 3265, 3270, 3325, 3273,
             3114, 3106, 3119, 3116, 3078, 3073, 3072, 3074, 3130, 3087,
-            2088, 2090, 2059, 2049, 
+            2088, 2090, 2059, 2049,
             2062, 2079, 2064, 2066, 2065,
             2736, 2738, 2746, 2703, 2700, 2702, 2751, 2698, 2696,
             2205, 2713, 2714, 2712, 2719, 2706,
@@ -97,7 +97,7 @@ struct FaceUVAT {
         /*
         double lambda_inv_mean = lambda_inv.sum() / lambda_inv.rows();
         lambda_inv = lambda_inv / lambda_inv_mean * lambda_inv_init;
-        
+
         double lambda_tot = 0.;
         for(int i = 0; i < lambda_inv.rows(); i++) {
             lambda_tot += 1./ lambda_inv(i);
@@ -178,7 +178,7 @@ struct FaceUVAT {
         UVSolver.setX(X);
 
         DGtal::trace.beginBlock("Solving for u");
-        
+
         X = UVSolver.DGprojectedNewtonSymDir();
 
         DGtal::trace.endBlock();
