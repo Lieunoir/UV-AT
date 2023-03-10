@@ -7,6 +7,11 @@ Once cloned, fetch the dependencies (geometry-central, libigl, polyscope and DGt
 ```
 git submodule update --init --recursive
 ```
+or directly,
+```
+git clone --recursive https://github.com/Lieunoir/UV-AT.git
+```
+
 
 Then, on  unbutu/macos:
 
