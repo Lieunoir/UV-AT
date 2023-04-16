@@ -1,4 +1,8 @@
-# UV-AT
+# Joint optimization of distortion and cut location for mesh parameterization using an Ambrosio-Tortorelli functional
+
+Source code of the paper: "Joint optimization of distortion and cut location for mesh parameterization using an Ambrosio-Tortorelli functional", Colin Weill–Duflos, David Coeurjolly, Fernando de Goes and Jacques-Olivier Lachaud, Computer Aided Geometric Design (proc. GMP 2023), to appear, 2023.
+
+
 
 ## Building
 
