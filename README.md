@@ -2,7 +2,7 @@
 
 Source code of the paper: "Joint optimization of distortion and cut location for mesh parameterization using an Ambrosio-Tortorelli functional", Colin Weill–Duflos, David Coeurjolly, Fernando de Goes and Jacques-Olivier Lachaud, Computer Aided Geometric Design (proc. GMP 2023), to appear, 2023.
 
-
+![IMG_0384](https://github.com/Lieunoir/UV-AT/assets/700165/3cbaa97c-ef53-4914-aee8-293fdd83ea95)
 
 ## Building
 
